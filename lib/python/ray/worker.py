@@ -22,6 +22,7 @@ import graph
 import services
 import libnumbuf
 import libraylib as raylib
+import redis_logger
 
 class RayTaskError(Exception):
   """An object used internally to represent a task that threw an exception.
@@ -776,7 +777,10 @@ def connect(node_ip_address, scheduler_address, objstore_address=None, worker=gl
   log_handler = logging.FileHandler(python_log_file_name)
   log_handler.setLevel(logging.DEBUG)
   log_handler.setFormatter(logging.Formatter(FORMAT))
+  redis_handler = redis_logger.RedisHandler(worker.worker_address)
+  redis_handler.setLevel(logging.DEBUG)
   _logger().addHandler(log_handler)
+  _logger().addHandler(redis_handler)
   _logger().setLevel(logging.DEBUG)
   _logger().propagate = False
   if mode in [raylib.SCRIPT_MODE, raylib.SILENT_MODE]:
@@ -1042,7 +1046,7 @@ def main_loop(worker=global_worker):
       # Notify the scheduler that running the function failed.
       # TODO(rkn): Notify the scheduler.
     else:
-      _logger().info("Successfully ran function on worker.")
+      _logger().info("Successfully ran function on worker.", extra={'event_type': 'TASK'})
 
   while True:
     command, command_args = raylib.wait_for_next_message(worker.handle)
