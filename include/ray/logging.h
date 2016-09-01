@@ -1,12 +1,17 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <sstream>
 
 #include <grpc++/grpc++.h>
+#include <hiredis/hiredis.h>
 
 struct RayConfig {
   bool log_to_file = false;
+  bool log_to_redis = false;
+  const char* origin;
   std::ofstream logfile;
+  redisContext* redis;
 };
 
 extern RayConfig global_ray_config;
@@ -25,6 +30,40 @@ extern "C" __declspec(dllimport) int __stdcall IsDebuggerPresent();
 #define RAY_BREAK_IF_DEBUGGING()
 #endif
 
+
+static const char* log_levels[3] = {"INFO", "DEBUG", "FATAL"};
+
+static inline void redis_log(RayConfig& ray_config,
+                             int log_level,
+                             const char* entity_type,
+                             const char* entity_id,
+                             const char* event_type,
+                             const char* message) {
+  if (ray_config.log_to_redis) {
+    struct timeval tv;
+    time_t now;
+    struct tm *local_now;
+    char timestamp[27];
+
+    gettimeofday(&tv, NULL);
+    now = tv.tv_sec;
+    local_now = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "%F %T", local_now);
+    redisCommand(global_ray_config.redis,
+                 "HMSET log:%s.%06d log_level %s entity_type %s entity_id %s event_type %s origin %s message %s",
+                 timestamp,
+                 (int) tv.tv_usec,
+                 log_levels[log_level],
+                 entity_type,
+                 entity_id,
+                 event_type,
+                 global_ray_config.origin,
+                 message);
+    std::cout << log_levels[log_level] << std::endl;
+  }
+}
+
+
 #define RAY_LOG(LEVEL, MESSAGE) \
   if (LEVEL == RAY_VERBOSE) { \
     \
@@ -40,6 +79,9 @@ extern "C" __declspec(dllimport) int __stdcall IsDebuggerPresent();
   } else { \
     if (global_ray_config.log_to_file) { \
       global_ray_config.logfile << MESSAGE << std::endl; \
+      std::stringstream RAY_LOG_ss; \
+      RAY_LOG_ss << MESSAGE; \
+      redis_log(global_ray_config, LEVEL, "", "", "", RAY_LOG_ss.str().c_str()); \
     } else { \
       std::cout << MESSAGE << std::endl; \
     } \
