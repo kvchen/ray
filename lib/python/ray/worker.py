@@ -777,7 +777,10 @@ def connect(node_ip_address, scheduler_address, objstore_address=None, worker=gl
   log_handler = logging.FileHandler(python_log_file_name)
   log_handler.setLevel(logging.DEBUG)
   log_handler.setFormatter(logging.Formatter(FORMAT))
-  redis_handler = redis_logger.RedisHandler(worker.worker_address)
+  if mode == raylib.WORKER_MODE:
+    redis_handler = redis_logger.RedisHandler("worker", worker.worker_address)
+  else:
+    redis_handler = redis_logger.RedisHandler("driver", node_ip_address)
   redis_handler.setLevel(logging.DEBUG)
   _logger().addHandler(log_handler)
   _logger().addHandler(redis_handler)

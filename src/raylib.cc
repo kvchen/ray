@@ -684,6 +684,11 @@ static PyObject* create_worker(PyObject* self, PyObject* args) {
   PyObject* worker_capsule = PyCapsule_New(static_cast<void*>(worker), "worker", &WorkerCapsule_Destructor);
   PyTuple_SetItem(t, 0, worker_capsule);
   PyTuple_SetItem(t, 1, PyString_FromString(worker->get_worker_address()));
+  if (is_driver) {
+    init_redis_log(global_ray_config, "driver", node_ip_address);
+  } else {
+    init_redis_log(global_ray_config, "worker", worker->get_worker_address());
+  }
   return t;
 }
 

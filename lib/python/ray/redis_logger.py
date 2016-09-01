@@ -16,9 +16,10 @@ REDIS_RECORD_FIELDS = ['log_level',
                        'message']
 
 class RedisHandler(logging.Handler):
-  def __init__(self, origin, redis_host='localhost', redis_port='6379'):
+  def __init__(self, origin_type, address, redis_host='localhost', redis_port='6379'):
     logging.Handler.__init__(self)
-    self.origin = origin
+    self.origin = "{origin_type}:{address}".format(origin_type=origin_type,
+                                                   address=address)
     self.redis = redis.StrictRedis(host=redis_host,
                                    port=redis_port)
     self.table = 'log'

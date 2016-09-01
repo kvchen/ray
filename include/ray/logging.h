@@ -6,22 +6,28 @@
 #include <grpc++/grpc++.h>
 #include <hiredis/hiredis.h>
 
+#define RAY_VERBOSE -1
+#define RAY_DEBUG 0
+#define RAY_INFO 1
+#define RAY_WARNING 2
+#define RAY_ERROR 3
+#define RAY_FATAL 4
+#define RAY_REFCOUNT RAY_VERBOSE
+#define RAY_ALIAS RAY_VERBOSE
+
+static const char* log_levels[5] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
+
 struct RayConfig {
   bool log_to_file = false;
   bool log_to_redis = false;
-  const char* origin;
+  int logging_level = RAY_DEBUG;
+  const char* origin_type;
+  const char* address;
   std::ofstream logfile;
   redisContext* redis;
 };
 
 extern RayConfig global_ray_config;
-
-#define RAY_VERBOSE -1
-#define RAY_INFO 0
-#define RAY_DEBUG 1
-#define RAY_FATAL 2
-#define RAY_REFCOUNT RAY_VERBOSE
-#define RAY_ALIAS RAY_VERBOSE
 
 #ifdef _MSC_VER
 extern "C" __declspec(dllimport) int __stdcall IsDebuggerPresent();
@@ -31,7 +37,14 @@ extern "C" __declspec(dllimport) int __stdcall IsDebuggerPresent();
 #endif
 
 
-static const char* log_levels[3] = {"INFO", "DEBUG", "FATAL"};
+static inline void init_redis_log(RayConfig& ray_config,
+                                  const char* origin_type,
+                                  const char* address) {
+  ray_config.log_to_redis = true;
+  ray_config.origin_type = origin_type;
+  ray_config.address = address;
+  ray_config.redis = redisConnect("127.0.0.1", 6379);
+}
 
 static inline void redis_log(RayConfig& ray_config,
                              int log_level,
@@ -39,6 +52,9 @@ static inline void redis_log(RayConfig& ray_config,
                              const char* entity_id,
                              const char* event_type,
                              const char* message) {
+  if (log_level < RAY_DEBUG || log_level > RAY_FATAL) {
+    return;
+  }
   if (ray_config.log_to_redis) {
     struct timeval tv;
     time_t now;
@@ -50,40 +66,40 @@ static inline void redis_log(RayConfig& ray_config,
     local_now = localtime(&now);
     strftime(timestamp, sizeof(timestamp), "%F %T", local_now);
     redisCommand(global_ray_config.redis,
-                 "HMSET log:%s.%06d log_level %s entity_type %s entity_id %s event_type %s origin %s message %s",
+                 "HMSET log:%s.%06d log_level %s entity_type %s entity_id %s event_type %s origin %s:%s message %s",
                  timestamp,
                  (int) tv.tv_usec,
                  log_levels[log_level],
                  entity_type,
                  entity_id,
                  event_type,
-                 global_ray_config.origin,
+                 global_ray_config.origin_type,
+                 global_ray_config.address,
                  message);
-    std::cout << log_levels[log_level] << std::endl;
   }
 }
 
 
 #define RAY_LOG(LEVEL, MESSAGE) \
-  if (LEVEL == RAY_VERBOSE) { \
-    \
-  } else if (LEVEL == RAY_FATAL) { \
-    std::cerr << "fatal error occured: " << MESSAGE << std::endl; \
-    if (global_ray_config.log_to_file) { \
-      global_ray_config.logfile << "fatal error occured: " << MESSAGE << std::endl; \
-    } \
-    RAY_BREAK_IF_DEBUGGING();  \
-    std::exit(1); \
-  } else if (LEVEL == RAY_DEBUG) { \
-    \
-  } else { \
-    if (global_ray_config.log_to_file) { \
-      global_ray_config.logfile << MESSAGE << std::endl; \
-      std::stringstream RAY_LOG_ss; \
-      RAY_LOG_ss << MESSAGE; \
-      redis_log(global_ray_config, LEVEL, "", "", "", RAY_LOG_ss.str().c_str()); \
+  if (LEVEL >= global_ray_config.logging_level) { \
+    std::stringstream RAY_LOG_ss; \
+    RAY_LOG_ss << MESSAGE; \
+    redis_log(global_ray_config, LEVEL, "", "", "", RAY_LOG_ss.str().c_str()); \
+    if (LEVEL == RAY_FATAL) { \
+      std::cerr << "fatal error occured: " << MESSAGE << std::endl; \
+      if (global_ray_config.log_to_file) { \
+        global_ray_config.logfile << "fatal error occured: " << MESSAGE << std::endl; \
+      } \
+      RAY_BREAK_IF_DEBUGGING();  \
+      std::exit(1); \
+    } else if (LEVEL == RAY_DEBUG) { \
+      \
     } else { \
-      std::cout << MESSAGE << std::endl; \
+      if (global_ray_config.log_to_file) { \
+        global_ray_config.logfile << MESSAGE << std::endl; \
+      } else { \
+        std::cout << MESSAGE << std::endl; \
+      } \
     } \
   }
 
@@ -93,7 +109,7 @@ static inline void redis_log(RayConfig& ray_config,
   }
 #define RAY_WARN(condition, message) \
   if (!(condition)) {\
-     RAY_LOG(RAY_INFO, "Check failed at line " << __LINE__ << " in " << __FILE__ << ": " << #condition << " with message " << message) \
+     RAY_LOG(RAY_WARNING, "Check failed at line " << __LINE__ << " in " << __FILE__ << ": " << #condition << " with message " << message) \
   }
 
 #define RAY_CHECK_EQ(var1, var2, message) RAY_CHECK((var1) == (var2), message)

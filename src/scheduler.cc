@@ -1196,10 +1196,7 @@ int main(int argc, char** argv) {
       create_log_dir_or_die(log_file_name);
       global_ray_config.log_to_file = true;
       global_ray_config.logfile.open(log_file_name);
-      global_ray_config.log_to_redis = true;
-      // TODO(swang): Need actual address here.
-      global_ray_config.origin = log_file_name;
-      global_ray_config.redis = redisConnect("127.0.0.1", 6379);
+      init_redis_log(global_ray_config, "scheduler", argv[1]);
     } else {
       std::cout << "scheduler: writing logs to stdout; you can change this by passing --log-file-name <filename> to ./scheduler" << std::endl;
       global_ray_config.log_to_file = false;

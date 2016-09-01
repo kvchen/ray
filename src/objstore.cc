@@ -363,6 +363,7 @@ int main(int argc, char** argv) {
       create_log_dir_or_die(log_file_name);
       global_ray_config.log_to_file = true;
       global_ray_config.logfile.open(log_file_name);
+      init_redis_log(global_ray_config, "objstore", argv[2]);
     } else {
       std::cout << "object store: writing logs to stdout; you can change this by passing --log-file-name <filename> to ./scheduler" << std::endl;
       global_ray_config.log_to_file = false;
