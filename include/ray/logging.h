@@ -15,6 +15,11 @@
 #define RAY_REFCOUNT RAY_VERBOSE
 #define RAY_ALIAS RAY_VERBOSE
 
+// Entity types.
+#define RAY_FUNCTION "FUNCTION"
+#define RAY_OBJECT "OBJECT"
+#define RAY_TASK "TASK"
+
 static const char* log_levels[5] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
 
 struct RayConfig {
@@ -81,12 +86,38 @@ static inline void redis_log(RayConfig& ray_config,
   }
 }
 
+static inline void ray_log(int log_level,
+                           const char* entity_type,
+                           const char* entity_id,
+                           const char* related_entity_ids,
+                           const char* event_type,
+                           const char* message) {
+  if (log_level < global_ray_config.logging_level) {
+    return;
+  }
+  if (global_ray_config.log_to_redis) {
+    redis_log(global_ray_config, log_level, entity_type, entity_id, related_entity_ids, event_type, message);
+  }
+  if (log_level == RAY_FATAL) {
+    std::cerr << "fatal error occured: " << message << std::endl;
+    if (global_ray_config.log_to_file) {
+      global_ray_config.logfile << "fatal error occured: " << message << std::endl;
+    }
+    RAY_BREAK_IF_DEBUGGING();
+    std::exit(1);
+  } else if (log_level == RAY_DEBUG) {
+  } else {
+    if (global_ray_config.log_to_file) {
+      global_ray_config.logfile << message << std::endl;
+    } else {
+      std::cout << message << std::endl;
+    }
+  }
+}
+
 
 #define RAY_LOG(LEVEL, MESSAGE) \
   if (LEVEL >= global_ray_config.logging_level) { \
-    std::stringstream RAY_LOG_ss; \
-    RAY_LOG_ss << MESSAGE; \
-    redis_log(global_ray_config, LEVEL, "", "", "", RAY_LOG_ss.str().c_str()); \
     if (LEVEL == RAY_FATAL) { \
       std::cerr << "fatal error occured: " << MESSAGE << std::endl; \
       if (global_ray_config.log_to_file) { \
