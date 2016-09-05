@@ -1118,7 +1118,7 @@ void SchedulerService::get_equivalent_objectids(ObjectID objectid, std::vector<O
 
 
 void SchedulerService::export_function_to_run_to_worker(WorkerId workerid, int function_index, MySynchronizedPtr<std::vector<WorkerHandle> > &workers, const MySynchronizedPtr<std::vector<std::unique_ptr<Function> > > &exported_functions_to_run) {
-  RAY_LOG(RAY_INFO, "exporting function to run with index " << function_index << " to worker " << workerid);
+  ray_log(RAY_INFO, RAY_FUNCTION, std::to_string(function_index).c_str(), std::to_string(workerid).c_str(), "EXPORT_TO_RUN", "");
   ClientContext context;
   RunFunctionOnWorkerRequest request;
   request.mutable_function()->CopyFrom(*(*exported_functions_to_run)[function_index].get());
@@ -1127,11 +1127,11 @@ void SchedulerService::export_function_to_run_to_worker(WorkerId workerid, int f
 }
 
 void SchedulerService::export_function_to_worker(WorkerId workerid, int function_index, MySynchronizedPtr<std::vector<WorkerHandle> > &workers, const MySynchronizedPtr<std::vector<std::unique_ptr<Function> > > &exported_functions) {
-  RAY_LOG(RAY_INFO, "exporting remote function with index " << function_index << " to worker " << workerid);
   ClientContext context;
   ImportRemoteFunctionRequest request;
   request.mutable_function()->CopyFrom(*(*exported_functions)[function_index].get());
   AckReply reply;
+  ray_log(RAY_INFO, RAY_FUNCTION, std::to_string(function_index).c_str(), std::to_string(workerid).c_str(), "EXPORT", request.function().name().c_str());
   RAY_CHECK_GRPC((*workers)[workerid].worker_stub->ImportRemoteFunction(&context, request, &reply));
 }
 
