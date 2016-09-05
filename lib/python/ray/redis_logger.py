@@ -11,6 +11,7 @@ import config
 REDIS_RECORD_FIELDS = ['log_level',
                        'entity_type',
                        'entity_id',
+                       'related_entity_ids',
                        'event_type',
                        'origin',
                        'message']

@@ -50,12 +50,13 @@ static inline void redis_log(RayConfig& ray_config,
                              int log_level,
                              const char* entity_type,
                              const char* entity_id,
+                             const char* related_entity_ids,
                              const char* event_type,
                              const char* message) {
   if (log_level < RAY_DEBUG || log_level > RAY_FATAL) {
     return;
   }
-  if (ray_config.log_to_redis) {
+  if (ray_config.log_to_redis && log_level >= ray_config.logging_level) {
     struct timeval tv;
     time_t now;
     struct tm *local_now;
@@ -66,12 +67,13 @@ static inline void redis_log(RayConfig& ray_config,
     local_now = localtime(&now);
     strftime(timestamp, sizeof(timestamp), "%F %T", local_now);
     redisCommand(global_ray_config.redis,
-                 "HMSET log:%s.%06d log_level %s entity_type %s entity_id %s event_type %s origin %s:%s message %s",
+                 "HMSET log:%s.%06d log_level %s entity_type %s entity_id %s related_entity_ids %s event_type %s origin %s:%s message %s",
                  timestamp,
                  (int) tv.tv_usec,
                  log_levels[log_level],
                  entity_type,
                  entity_id,
+                 related_entity_ids,
                  event_type,
                  global_ray_config.origin_type,
                  global_ray_config.address,
