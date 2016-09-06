@@ -91,7 +91,7 @@ static inline void ray_log(int log_level,
                            const char* entity_type,
                            const char* entity_id,
                            const char* event_type,
-                           const char* message,
+                           const char* message="",
                            const std::vector<T> related_entity_ids=std::vector<T>()) {
   if (log_level < global_ray_config.logging_level) {
     return;

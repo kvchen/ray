@@ -5,9 +5,9 @@ import datetime
 import config
 
 
-# 'entity_type', 'entity_id', and 'event_type' can be specified in a dictionary
+# 'entity_type', 'entity_id', 'related_entity_ids', and 'event_type' can be specified in a dictionary
 # passed into Python logging calls under the kwarg 'extra'.
-# Ex: logger.info("Logging message", extra={'entity_type': 'TASK'})
+# Ex: logger.info("Logging message", extra={'entity_type': 'TASK', 'related_entity_ids': [3, 5, 6]})
 REDIS_RECORD_FIELDS = ['log_level',
                        'entity_type',
                        'entity_id',
@@ -15,6 +15,10 @@ REDIS_RECORD_FIELDS = ['log_level',
                        'event_type',
                        'origin',
                        'message']
+
+RAY_FUNCTION = 'FUNCTION'
+RAY_OBJECT = 'OBJECT'
+RAY_TASK = 'TASK'
 
 class RedisHandler(logging.Handler):
   def __init__(self, origin_type, address, redis_host='localhost', redis_port='6379'):
@@ -32,6 +36,8 @@ class RedisHandler(logging.Handler):
     record_dict = {}
     for field in REDIS_RECORD_FIELDS:
       record_dict[field] = getattr(record, field, '')
+    related_entity_ids = [str(entity_id) for entity_id in getattr(record, 'related_entity_ids', [])]
+    record_dict['related_entity_ids'] = ' '.join(related_entity_ids)
     record_dict['origin'] = self.origin
     record_dict['log_level'] = logging.getLevelName(self.level)
     self.redis.hmset(key, record_dict)

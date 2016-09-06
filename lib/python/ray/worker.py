@@ -971,6 +971,11 @@ def main_loop(worker=global_worker):
       outputs = worker.functions[function_name].executor(arguments) # execute the function
       if len(return_objectids) == 1:
         outputs = (outputs,)
+      _logger().debug(function_name, extra={
+          'entity_type': redis_logger.RAY_TASK,
+          'event_type': 'DONE',
+          'related_entity_ids': [objectid.id for objectid in return_objectids],
+          })
       store_outputs_in_objstore(return_objectids, outputs, worker) # store output in local object store
     except Exception as e:
       # If the task threw an exception, then record the traceback. We determine
@@ -982,7 +987,13 @@ def main_loop(worker=global_worker):
       store_outputs_in_objstore(return_objectids, failure_objects, worker)
       # Notify the scheduler that the task failed.
       raylib.notify_failure(worker.handle, function_name, str(failure_object), raylib.FailedTask)
-      _logger().info("While running function {}, worker threw exception with message: \n\n{}\n".format(function_name, str(failure_object)))
+      _logger().info("While running function {}, worker threw exception with "
+                     "message: \n\n{}\n".format(function_name,
+                                                str(failure_object)),
+                     extra={
+                         'entity_type': redis_logger.RAY_TASK,
+                         'event_type': 'EXCEPTION'
+                          })
     # Notify the scheduler that the task is done. This happens regardless of
     # whether the task succeeded or failed.
     raylib.ready_for_new_task(worker.handle)
@@ -1013,7 +1024,10 @@ def main_loop(worker=global_worker):
       function.__module__ = module
       assert function_name == "{}.{}".format(function.__module__, function.__name__), "The remote function name does not match the name that was passed in."
       worker.functions[function_name] = remote(arg_types, return_types, worker)(function)
-      _logger().info("Successfully imported remote function {}.".format(function_name))
+      _logger().info(function_name, extra={
+          'entity_type': redis_logger.RAY_FUNCTION,
+          'event_type': 'IMPORT',
+          })
       # Noify the scheduler that the remote function imported successfully.
       # We pass an empty error message string because the import succeeded.
       raylib.register_remote_function(worker.handle, function_name, len(return_types))

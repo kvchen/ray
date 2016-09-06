@@ -661,22 +661,25 @@ void SchedulerService::assign_task(OperationId operationid, WorkerId workerid, c
   ClientContext context;
   ExecuteTaskRequest request;
   AckReply reply;
-  RAY_LOG(RAY_INFO, "starting to send arguments");
+  std::vector<ObjectID> canonical_objectids;
   for (size_t i = 0; i < task.arg_size(); ++i) {
     if (!task.arg(i).has_obj()) {
       ObjectID objectid = task.arg(i).id();
       ObjectID canonical_objectid = get_canonical_objectid(objectid);
+      canonical_objectids.push_back(canonical_objectid);
       // Notify the relevant objstore about potential aliasing when it's ready
       GET(alias_notification_queue_)->push_back(std::make_pair(objstoreid, std::make_pair(objectid, canonical_objectid)));
       attempt_notify_alias(objstoreid, objectid, canonical_objectid);
-      RAY_LOG(RAY_DEBUG, "task contains object ref " << canonical_objectid);
       deliver_object_async_if_necessary(canonical_objectid, pick_objstore(canonical_objectid), objstoreid);
     }
   }
+  ray_log(RAY_DEBUG, RAY_TASK, std::to_string(operationid).c_str(), "SENT_ARGUMENTS", task.name().c_str(), canonical_objectids);
   {
     auto workers = GET(workers_);
     (*workers)[workerid].current_task = operationid;
     request.mutable_task()->CopyFrom(task); // TODO(rkn): Is ownership handled properly here?
+    const std::vector<WorkerId> workerids = {workerid};
+    ray_log(RAY_INFO, RAY_TASK, std::to_string(operationid).c_str(), "ASSIGN", task.name().c_str(), workerids);
     RAY_CHECK_GRPC((*workers)[workerid].worker_stub->ExecuteTask(&context, request, &reply));
   }
 }

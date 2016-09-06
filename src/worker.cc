@@ -19,7 +19,7 @@ inline WorkerServiceImpl::WorkerServiceImpl(const std::string& send_queue_name, 
 
 Status WorkerServiceImpl::ExecuteTask(ServerContext* context, const ExecuteTaskRequest* request, AckReply* reply) {
   RAY_CHECK(mode_ == Mode::WORKER_MODE, "ExecuteTask can only be called on workers.");
-  RAY_LOG(RAY_INFO, "invoked task " << request->task().name());
+  ray_log(RAY_INFO, RAY_TASK, "", "EXECUTE", request->task().name().c_str());
   std::unique_ptr<WorkerMessage> message(new WorkerMessage());
   message->mutable_task()->CopyFrom(request->task());
   {
@@ -127,13 +127,14 @@ SubmitTaskReply Worker::submit_task(SubmitTaskRequest* request, int max_retries,
   RAY_CHECK(connected_, "Attempted to perform submit_task but failed.");
   SubmitTaskReply reply;
   request->set_workerid(workerid_);
+  ray_log(RAY_DEBUG, RAY_TASK, "", "SUBMIT", request->task().name().c_str());
   for (int i = 0; i < 1 + max_retries; ++i) {
     ClientContext context;
     RAY_CHECK_GRPC(scheduler_stub_->SubmitTask(&context, *request, &reply));
     if (reply.function_registered()) {
       break;
     }
-    RAY_LOG(RAY_INFO, "The function " << request->task().name() << " was not registered, so attempting to resubmit the task.");
+    ray_log(RAY_WARNING, RAY_TASK, "", "NOT_REGISTERED", request->task().name().c_str());
     std::this_thread::sleep_for(std::chrono::milliseconds(retry_wait_milliseconds));
   }
   return reply;
@@ -219,8 +220,10 @@ slice Worker::get_object(ObjectID objectid) {
   request.type = ObjRequestType::GET;
   request.objectid = objectid;
   RAY_CHECK(request_obj_queue_.send(&request), "Failed to send request from the worker to the object store because the message queue was full.");
+  ray_log(RAY_DEBUG, RAY_OBJECT, std::to_string(objectid).c_str(), "GET");
   ObjHandle result;
   RAY_CHECK(receive_obj_queue_.receive(&result), "error receiving over IPC");
+  ray_log(RAY_DEBUG, RAY_OBJECT, std::to_string(objectid).c_str(), "GET_DONE");
   slice slice;
   slice.data = segmentpool_->get_address(result);
   slice.len = result.size();
@@ -234,26 +237,18 @@ void Worker::put_object(ObjectID objectid, const Obj* obj, std::vector<ObjectID>
   RAY_CHECK(connected_, "Attempted to perform put_object but failed.");
   std::string data;
   obj->SerializeToString(&data); // TODO(pcm): get rid of this serialization
-  ObjRequest request;
-  request.workerid = workerid_;
-  request.type = ObjRequestType::ALLOC;
-  request.objectid = objectid;
-  request.size = data.size();
-  RAY_CHECK(request_obj_queue_.send(&request), "error sending over IPC");
+
+  RAY_CHECK(connected_, "Attempted to perform put_arrow but failed.");
+  SegmentId segmentid;
+  uint8_t* target = (uint8_t*) allocate_buffer(objectid, data.size(), segmentid);
   if (contained_objectids.size() > 0) {
     RAY_LOG(RAY_REFCOUNT, "In put_object, calling increment_reference_count for contained objectids");
     increment_reference_count(contained_objectids); // Notify the scheduler that some object references are serialized in the objstore.
   }
-  ObjHandle result;
-  RAY_CHECK(receive_obj_queue_.receive(&result), "error receiving over IPC");
-  uint8_t* target = segmentpool_->get_address(result);
   std::memcpy(target, data.data(), data.size());
   // We immediately unmap here; if the object is going to be accessed again, it will be mapped again;
   // This is reqired because we do not have a mechanism to unmap the object later.
-  segmentpool_->unmap_segment(result.segmentid());
-  request.type = ObjRequestType::WORKER_DONE;
-  request.metadata_offset = 0;
-  RAY_CHECK(request_obj_queue_.send(&request), "Failed to send request from the worker to the object store because the message queue was full.");
+  finish_buffer(objectid, segmentid, 0);
 
   // Notify the scheduler about the objectids that we are serializing in the objstore.
   AddContainedObjectIDsRequest contained_objectids_request;
@@ -284,6 +279,7 @@ const char* Worker::allocate_buffer(ObjectID objectid, int64_t size, SegmentId& 
   request.objectid = objectid;
   request.size = size;
   RAY_CHECK(request_obj_queue_.send(&request), "Failed to send request from the worker to the object store because the message queue was full.");
+  ray_log(RAY_DEBUG, RAY_OBJECT, std::to_string(objectid).c_str(), "ALLOCATE");
   ObjHandle result;
   RAY_CHECK(receive_obj_queue_.receive(&result), "error receiving over IPC");
   const char* address = reinterpret_cast<const char*>(segmentpool_->get_address(result));
@@ -299,6 +295,7 @@ PyObject* Worker::finish_buffer(ObjectID objectid, SegmentId segmentid, int64_t 
   request.type = ObjRequestType::WORKER_DONE;
   request.metadata_offset = metadata_offset;
   RAY_CHECK(request_obj_queue_.send(&request), "Failed to send request from the worker to the object store because the message queue was full.");
+  ray_log(RAY_DEBUG, RAY_OBJECT, std::to_string(objectid).c_str(), "PUT_DONE");
   Py_RETURN_NONE;
 }
 

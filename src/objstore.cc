@@ -221,7 +221,8 @@ void ObjStoreService::process_worker_request(const ObjRequest request) {
         std::lock_guard<std::mutex> memory_lock(memory_lock_);
         std::pair<ObjHandle, MemoryStatusType>& item = memory_[request.objectid];
         if (item.second == MemoryStatusType::READY) {
-          RAY_LOG(RAY_DEBUG, "Responding to GET request: returning objectid " << request.objectid);
+          const std::vector<WorkerId> workerids = {request.workerid};
+          ray_log(RAY_DEBUG, RAY_OBJECT, std::to_string(request.objectid).c_str(), "GET", "", workerids);
           RAY_CHECK(send_queues_[request.workerid].send(&item.first), "Failed to send message from the object store to the worker with id " << request.workerid << " because the message queue was full.");
         } else if (item.second == MemoryStatusType::NOT_READY || item.second == MemoryStatusType::NOT_PRESENT || item.second == MemoryStatusType::PRE_ALLOCED) {
           std::lock_guard<std::mutex> lock(get_queue_lock_);
