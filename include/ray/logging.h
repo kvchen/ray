@@ -55,9 +55,9 @@ static inline void redis_log(RayConfig& ray_config,
                              int log_level,
                              const char* entity_type,
                              const char* entity_id,
-                             const char* related_entity_ids,
                              const char* event_type,
-                             const char* message) {
+                             const char* message,
+                             const char* related_entity_ids) {
   if (log_level < RAY_DEBUG || log_level > RAY_FATAL) {
     return;
   }
@@ -86,17 +86,25 @@ static inline void redis_log(RayConfig& ray_config,
   }
 }
 
+template<class T = int>
 static inline void ray_log(int log_level,
                            const char* entity_type,
                            const char* entity_id,
-                           const char* related_entity_ids,
                            const char* event_type,
-                           const char* message) {
+                           const char* message,
+                           const std::vector<T> related_entity_ids=std::vector<T>()) {
   if (log_level < global_ray_config.logging_level) {
     return;
   }
   if (global_ray_config.log_to_redis) {
-    redis_log(global_ray_config, log_level, entity_type, entity_id, related_entity_ids, event_type, message);
+    std::stringstream ss;
+    for (size_t i = 0; i < related_entity_ids.size(); ++i) {
+      if (i > 0) {
+        ss << " ";
+      }
+      ss << related_entity_ids[i];
+    }
+    redis_log(global_ray_config, log_level, entity_type, entity_id, event_type, message, ss.str().c_str());
   }
   if (log_level == RAY_FATAL) {
     std::cerr << "fatal error occured: " << message << std::endl;

@@ -35,7 +35,7 @@ Status WorkerServiceImpl::RunFunctionOnWorker(ServerContext* context, const RunF
   RAY_CHECK(mode_ == Mode::WORKER_MODE, "RunFunctionOnWorker can only be called on workers.");
   std::unique_ptr<WorkerMessage> message(new WorkerMessage());
   message->mutable_function_to_run()->CopyFrom(request->function());
-  ray_log(RAY_INFO, RAY_FUNCTION, "", "", "RUN", request->function().name().c_str());
+  ray_log(RAY_INFO, RAY_FUNCTION, "", "RUN", request->function().name().c_str());
   {
     WorkerMessage* message_ptr = message.get();
     RAY_CHECK(send_queue_.send(&message_ptr), "Failed to send message from the worker service to the worker because the message queue was full.");
@@ -49,7 +49,7 @@ Status WorkerServiceImpl::ImportRemoteFunction(ServerContext* context, const Imp
   RAY_CHECK(mode_ == Mode::WORKER_MODE, "ImportRemoteFunction can only be called on workers.");
   std::unique_ptr<WorkerMessage> message(new WorkerMessage());
   message->mutable_function()->CopyFrom(request->function());
-  ray_log(RAY_INFO, RAY_FUNCTION, "", "", "IMPORT", request->function().name().c_str());
+  ray_log(RAY_INFO, RAY_FUNCTION, "", "IMPORT", request->function().name().c_str());
   {
     WorkerMessage* message_ptr = message.get();
     RAY_CHECK(send_queue_.send(&message_ptr), "Failed to send message from the worker service to the worker because the message queue was full.");
@@ -463,7 +463,7 @@ void Worker::run_function_on_all_workers(const std::string& function) {
   RunFunctionOnAllWorkersRequest request;
   request.mutable_function()->set_implementation(function);
   AckReply reply;
-  ray_log(RAY_DEBUG, RAY_FUNCTION, "", "", "EXPORT_TO_RUN", "");
+  ray_log(RAY_DEBUG, RAY_FUNCTION, "", "EXPORT_TO_RUN", "");
   RAY_CHECK_GRPC(scheduler_stub_->RunFunctionOnAllWorkers(&context, request, &reply));
 }
 
@@ -474,7 +474,7 @@ bool Worker::export_remote_function(const std::string& function_name, const std:
   request.mutable_function()->set_name(function_name);
   request.mutable_function()->set_implementation(function);
   AckReply reply;
-  ray_log(RAY_DEBUG, RAY_FUNCTION, "", "", "EXPORT", function_name.c_str());
+  ray_log(RAY_DEBUG, RAY_FUNCTION, "", "EXPORT", function_name.c_str());
   RAY_CHECK_GRPC(scheduler_stub_->ExportRemoteFunction(&context, request, &reply));
   return true;
 }
