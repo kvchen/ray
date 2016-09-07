@@ -21,13 +21,20 @@ RAY_OBJECT = 'OBJECT'
 RAY_TASK = 'TASK'
 
 class RedisHandler(logging.Handler):
-  def __init__(self, origin_type, address, redis_host='localhost', redis_port='6379'):
+  def __init__(self, origin_type, address, redis_host, redis_port):
     logging.Handler.__init__(self)
     self.origin = "{origin_type}:{address}".format(origin_type=origin_type,
                                                    address=address)
+    self.table = 'log'
     self.redis = redis.StrictRedis(host=redis_host,
                                    port=redis_port)
-    self.table = 'log'
+
+  def check_connected(self):
+    try:
+      self.redis.ping()
+      return True
+    except redis.ConnectionError:
+      return False
 
   def emit(self, record):
     # Key is <tablename>:<timestamp>.

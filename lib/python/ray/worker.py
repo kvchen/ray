@@ -628,7 +628,7 @@ def task_info(worker=global_worker):
   check_connected(worker)
   return raylib.task_info(worker.handle)
 
-def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_address=None, node_ip_address=None, driver_mode=raylib.SCRIPT_MODE):
+def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_address=None, node_ip_address=None, driver_mode=raylib.SCRIPT_MODE, redis_host='localhost', redis_port=6379):
   """Either connect to an existing Ray cluster or start one and connect to it.
 
   This method handles two cases. Either a Ray cluster already exists and we
@@ -673,7 +673,7 @@ def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_
     num_objstores = 1 if num_objstores is None else num_objstores
     # Start the scheduler, object store, and some workers. These will be killed
     # by the call to cleanup(), which happens when the Python script exits.
-    scheduler_address = services.start_ray_local(num_objstores=num_objstores, num_workers=num_workers, worker_path=None)
+    scheduler_address = services.start_ray_local(num_objstores=num_objstores, num_workers=num_workers, worker_path=None, redis_host=redis_host, redis_port=redis_port)
   else:
     # In this case, there is an existing scheduler and object store, and we do
     # not need to start any processes.
@@ -684,7 +684,7 @@ def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_
   # Connect this driver to the scheduler and object store. The corresponing call
   # to disconnect will happen in the call to cleanup() when the Python script
   # exits.
-  connect(node_ip_address, scheduler_address, worker=global_worker, mode=driver_mode)
+  connect(node_ip_address, scheduler_address, worker=global_worker, mode=driver_mode, redis_host=redis_host, redis_port=redis_port)
 
 def cleanup(worker=global_worker):
   """Disconnect the driver, and terminate any processes started in init.
@@ -731,7 +731,7 @@ def print_error_messages(worker=global_worker):
       pass
     time.sleep(0.2)
 
-def connect(node_ip_address, scheduler_address, objstore_address=None, worker=global_worker, mode=raylib.WORKER_MODE):
+def connect(node_ip_address, scheduler_address, redis_host='localhost', redis_port=6379, objstore_address=None, worker=global_worker, mode=raylib.WORKER_MODE):
   """Connect this worker to the scheduler and an object store.
 
   Args:
@@ -757,7 +757,7 @@ def connect(node_ip_address, scheduler_address, objstore_address=None, worker=gl
   # Create a worker object. This also creates the worker service, which can
   # receive commands from the scheduler. This call also sets up a queue between
   # the worker and the worker service.
-  worker.handle, worker.worker_address = raylib.create_worker(node_ip_address, scheduler_address, objstore_address if objstore_address is not None else "", mode, cpp_log_file_name)
+  worker.handle, worker.worker_address = raylib.create_worker(node_ip_address, scheduler_address, objstore_address if objstore_address is not None else "", mode, cpp_log_file_name, redis_host, redis_port)
   # If this is a driver running in SCRIPT_MODE, start a thread to print error
   # messages asynchronously in the background. Ideally the scheduler would push
   # messages to the driver's worker service, but we ran into bugs when trying to
@@ -778,12 +778,17 @@ def connect(node_ip_address, scheduler_address, objstore_address=None, worker=gl
   log_handler.setLevel(logging.DEBUG)
   log_handler.setFormatter(logging.Formatter(FORMAT))
   if mode == raylib.WORKER_MODE:
-    redis_handler = redis_logger.RedisHandler("worker", worker.worker_address)
+    redis_handler = redis_logger.RedisHandler("worker", worker.worker_address, redis_host, redis_port)
   else:
-    redis_handler = redis_logger.RedisHandler("driver", node_ip_address)
+    redis_handler = redis_logger.RedisHandler("driver", node_ip_address, redis_host, redis_port)
   redis_handler.setLevel(logging.DEBUG)
+  if redis_handler.check_connected():
+    _logger().addHandler(redis_handler)
+  else:
+    print ("Connection error: No Redis instance detected at "
+           "{host}:{port}.").format(host=redis_host,
+                                    port=redis_port)
   _logger().addHandler(log_handler)
-  _logger().addHandler(redis_handler)
   _logger().setLevel(logging.DEBUG)
   _logger().propagate = False
   if mode in [raylib.SCRIPT_MODE, raylib.SILENT_MODE]:

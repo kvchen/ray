@@ -667,7 +667,9 @@ static PyObject* create_worker(PyObject* self, PyObject* args) {
   const char* objstore_address;
   int mode;
   const char* log_file_name;
-  if (!PyArg_ParseTuple(args, "sssis", &node_ip_address, &scheduler_address, &objstore_address, &mode, &log_file_name)) {
+  const char* redis_host;
+  int redis_port;
+  if (!PyArg_ParseTuple(args, "sssissi", &node_ip_address, &scheduler_address, &objstore_address, &mode, &log_file_name, &redis_host, &redis_port)) {
     return NULL;
   }
   // Set the logging file.
@@ -685,9 +687,9 @@ static PyObject* create_worker(PyObject* self, PyObject* args) {
   PyTuple_SetItem(t, 0, worker_capsule);
   PyTuple_SetItem(t, 1, PyString_FromString(worker->get_worker_address()));
   if (is_driver) {
-    init_redis_log(global_ray_config, "driver", node_ip_address);
+    init_redis_log(global_ray_config, "driver", node_ip_address, redis_host, redis_port);
   } else {
-    init_redis_log(global_ray_config, "worker", worker->get_worker_address());
+    init_redis_log(global_ray_config, "worker", worker->get_worker_address(), redis_host, redis_port);
   }
   return t;
 }

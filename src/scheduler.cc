@@ -1197,11 +1197,19 @@ int main(int argc, char** argv) {
   if (argc > 2) {
     const char* log_file_name = get_cmd_option(argv, argv + argc, "--log-file-name");
     if (log_file_name) {
-      std::cout << "scheduler: writing to log file " << log_file_name << std::endl;
+      const char* redis_host = get_cmd_option(argv, argv + argc, "--redis-host");
+      const char* redis_port = get_cmd_option(argv, argv + argc, "--redis-port");
+      if (!redis_host) {
+        redis_host = "localhost";
+      }
+      if (!redis_port) {
+        redis_port = "6379";
+      }
+      std::cout << "scheduler: writing to log file " << log_file_name << ", connected to redis at " << redis_host << ":" << redis_port << std::endl;
       create_log_dir_or_die(log_file_name);
       global_ray_config.log_to_file = true;
       global_ray_config.logfile.open(log_file_name);
-      init_redis_log(global_ray_config, "scheduler", argv[1]);
+      init_redis_log(global_ray_config, "scheduler", argv[1], redis_host, std::stoi(redis_port));
     } else {
       std::cout << "scheduler: writing logs to stdout; you can change this by passing --log-file-name <filename> to ./scheduler" << std::endl;
       global_ray_config.log_to_file = false;

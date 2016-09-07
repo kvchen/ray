@@ -44,11 +44,26 @@ extern "C" __declspec(dllimport) int __stdcall IsDebuggerPresent();
 
 static inline void init_redis_log(RayConfig& ray_config,
                                   const char* origin_type,
-                                  const char* address) {
-  ray_config.log_to_redis = true;
+                                  const char* address,
+                                  const char* redis_host,
+                                  int redis_port) {
   ray_config.origin_type = origin_type;
   ray_config.address = address;
-  ray_config.redis = redisConnect("127.0.0.1", 6379);
+  ray_config.redis = redisConnect(redis_host, redis_port);
+  if (ray_config.redis == NULL || ray_config.redis->err) {
+    if (ray_config.redis) {
+      std::cout << "Connection error on " << origin_type << ":" << address << ": "
+                << ray_config.redis->errstr
+                << " at " << redis_host << ":" << redis_port
+                << std::endl;
+      redisFree(ray_config.redis);
+    } else {
+      std::cout << "Connection error on " << origin_type << ":" << address << ": "
+                << "can't allocate redis context" << std::endl;
+    }
+  } else {
+    ray_config.log_to_redis = true;
+  }
 }
 
 static inline void redis_log(RayConfig& ray_config,
