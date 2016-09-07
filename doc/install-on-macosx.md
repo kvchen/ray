@@ -19,7 +19,7 @@ brew update
 brew install git cmake automake autoconf libtool boost graphviz
 sudo easy_install pip
 sudo pip install ipython --user
-sudo pip install numpy typing funcsigs subprocess32 protobuf colorama graphviz cloudpickle redis-py --ignore-installed six
+sudo pip install numpy typing funcsigs subprocess32 protobuf colorama graphviz cloudpickle redis --ignore-installed six
 ```
 
 ## Build
