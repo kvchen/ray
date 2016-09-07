@@ -96,7 +96,7 @@ static inline void ray_log(int log_level,
     std::stringstream ss;
     for (size_t i = 0; i < related_entity_ids.size(); ++i) {
       if (i > 0) {
-        ss << " ";
+        ss << ",";
       }
       ss << related_entity_ids[i];
     }
