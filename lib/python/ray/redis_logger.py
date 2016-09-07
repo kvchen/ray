@@ -1,6 +1,6 @@
 import logging
 import redis
-import datetime
+import time
 
 import config
 
@@ -31,13 +31,14 @@ class RedisHandler(logging.Handler):
 
   def emit(self, record):
     # Key is <tablename>:<timestamp>.
-    timestamp = datetime.datetime.now()
-    key = "{table}:{timestamp}".format(table=self.table, timestamp=timestamp)
+    timestamp = time.time()
+    key = "{table}:{origin}:{timestamp:.6f}".format(table=self.table,
+                                                    origin=self.origin,
+                                                    timestamp=timestamp)
     record_dict = {}
     for field in REDIS_RECORD_FIELDS:
       record_dict[field] = getattr(record, field, '')
     related_entity_ids = [str(entity_id) for entity_id in getattr(record, 'related_entity_ids', [])]
     record_dict['related_entity_ids'] = ' '.join(related_entity_ids)
-    record_dict['origin'] = self.origin
     record_dict['log_level'] = logging.getLevelName(self.level)
     self.redis.hmset(key, record_dict)

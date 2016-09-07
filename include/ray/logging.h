@@ -62,26 +62,21 @@ static inline void redis_log(RayConfig& ray_config,
     return;
   }
   if (ray_config.log_to_redis && log_level >= ray_config.logging_level) {
+    std::stringstream timestamp_ss;
     struct timeval tv;
-    time_t now;
-    struct tm *local_now;
-    char timestamp[27];
 
     gettimeofday(&tv, NULL);
-    now = tv.tv_sec;
-    local_now = localtime(&now);
-    strftime(timestamp, sizeof(timestamp), "%F %T", local_now);
+    timestamp_ss << tv.tv_sec << "." << tv.tv_usec;
     redisCommand(global_ray_config.redis,
-                 "HMSET log:%s.%06d log_level %s entity_type %s entity_id %s related_entity_ids %s event_type %s origin %s:%s message %s",
-                 timestamp,
-                 (int) tv.tv_usec,
+                 "HMSET log:%s:%s:%s log_level %s entity_type %s entity_id %s related_entity_ids %s event_type %s message %s",
+                 global_ray_config.origin_type,
+                 global_ray_config.address,
+                 timestamp_ss.str().c_str(),
                  log_levels[log_level],
                  entity_type,
                  entity_id,
                  related_entity_ids,
                  event_type,
-                 global_ray_config.origin_type,
-                 global_ray_config.address,
                  message);
   }
 }
