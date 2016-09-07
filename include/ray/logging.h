@@ -68,7 +68,7 @@ static inline void redis_log(RayConfig& ray_config,
     gettimeofday(&tv, NULL);
     timestamp_ss << tv.tv_sec << "." << tv.tv_usec;
     redisCommand(global_ray_config.redis,
-                 "HMSET log:%s:%s:%s log_level %s entity_type %s entity_id %s related_entity_ids %s event_type %s message %s",
+                 "HMSET log:%s:%s:%s log_level %s entity_type %s entity_id %s related_entity_ids %s event_type %s message %s timestamp %s",
                  global_ray_config.origin_type,
                  global_ray_config.address,
                  timestamp_ss.str().c_str(),
@@ -77,7 +77,8 @@ static inline void redis_log(RayConfig& ray_config,
                  entity_id,
                  related_entity_ids,
                  event_type,
-                 message);
+                 message,
+                 timestamp_ss.str().c_str());
   }
 }
 
