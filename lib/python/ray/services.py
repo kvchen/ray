@@ -54,7 +54,7 @@ def cleanup():
     print "Ray did not shut down properly."
   all_processes = []
 
-def start_scheduler(scheduler_address, cleanup, redis_host='localhost', redis_port='6379'):
+def start_scheduler(scheduler_address, cleanup, redis_host="localhost", redis_port=6379):
   """This method starts a scheduler process.
 
   Args:
@@ -73,7 +73,7 @@ def start_scheduler(scheduler_address, cleanup, redis_host='localhost', redis_po
   if cleanup:
     all_processes.append(p)
 
-def start_objstore(scheduler_address, node_ip_address, cleanup, redis_host='localhost', redis_port='6379'):
+def start_objstore(scheduler_address, node_ip_address, cleanup, redis_host="localhost", redis_port=6379):
   """This method starts an object store process.
 
   Args:
@@ -94,7 +94,7 @@ def start_objstore(scheduler_address, node_ip_address, cleanup, redis_host='loca
   if cleanup:
     all_processes.append(p)
 
-def start_worker(node_ip_address, worker_path, scheduler_address, objstore_address=None, cleanup=True, redis_host='localhost', redis_port=6379):
+def start_worker(node_ip_address, worker_path, scheduler_address, objstore_address=None, cleanup=True, redis_host="localhost", redis_port=6379):
   """This method starts a worker process.
 
   Args:
@@ -166,7 +166,7 @@ def start_workers(scheduler_address, objstore_address, num_workers, worker_path)
   for _ in range(num_workers):
     start_worker(node_ip_address, worker_path, scheduler_address, cleanup=False)
 
-def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0, worker_path=None, redis_host='localhost', redis_port=6379):
+def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0, worker_path=None, redis_host="localhost", redis_port=6379):
   """Start Ray in local mode.
 
   This method starts Ray in local mode (as opposed to cluster mode, which is

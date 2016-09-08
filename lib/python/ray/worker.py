@@ -628,7 +628,7 @@ def task_info(worker=global_worker):
   check_connected(worker)
   return raylib.task_info(worker.handle)
 
-def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_address=None, node_ip_address=None, driver_mode=raylib.SCRIPT_MODE, redis_host='localhost', redis_port=6379):
+def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_address=None, node_ip_address=None, driver_mode=raylib.SCRIPT_MODE, redis_host="localhost", redis_port=6379):
   """Either connect to an existing Ray cluster or start one and connect to it.
 
   This method handles two cases. Either a Ray cluster already exists and we
@@ -731,7 +731,7 @@ def print_error_messages(worker=global_worker):
       pass
     time.sleep(0.2)
 
-def connect(node_ip_address, scheduler_address, redis_host='localhost', redis_port=6379, objstore_address=None, worker=global_worker, mode=raylib.WORKER_MODE):
+def connect(node_ip_address, scheduler_address, redis_host="localhost", redis_port=6379, objstore_address=None, worker=global_worker, mode=raylib.WORKER_MODE):
   """Connect this worker to the scheduler and an object store.
 
   Args:
@@ -977,9 +977,9 @@ def main_loop(worker=global_worker):
       if len(return_objectids) == 1:
         outputs = (outputs,)
       _logger().debug(function_name, extra={
-          'entity_type': redis_logger.RAY_TASK,
-          'event_type': 'DONE',
-          'related_entity_ids': [objectid.id for objectid in return_objectids],
+          "entity_type": redis_logger.RAY_TASK,
+          "event_type": "DONE",
+          "related_entity_ids": [objectid.id for objectid in return_objectids],
           })
       store_outputs_in_objstore(return_objectids, outputs, worker) # store output in local object store
     except Exception as e:
@@ -996,8 +996,8 @@ def main_loop(worker=global_worker):
                      "message: \n\n{}\n".format(function_name,
                                                 str(failure_object)),
                      extra={
-                         'entity_type': redis_logger.RAY_TASK,
-                         'event_type': 'EXCEPTION'
+                         "entity_type": redis_logger.RAY_TASK,
+                         "event_type": "EXCEPTION"
                           })
     # Notify the scheduler that the task is done. This happens regardless of
     # whether the task succeeded or failed.
@@ -1030,8 +1030,8 @@ def main_loop(worker=global_worker):
       assert function_name == "{}.{}".format(function.__module__, function.__name__), "The remote function name does not match the name that was passed in."
       worker.functions[function_name] = remote(arg_types, return_types, worker)(function)
       _logger().info(function_name, extra={
-          'entity_type': redis_logger.RAY_FUNCTION,
-          'event_type': 'IMPORT',
+          "entity_type": redis_logger.RAY_FUNCTION,
+          "event_type": "IMPORT",
           })
       # Noify the scheduler that the remote function imported successfully.
       # We pass an empty error message string because the import succeeded.
@@ -1068,7 +1068,7 @@ def main_loop(worker=global_worker):
       # Notify the scheduler that running the function failed.
       # TODO(rkn): Notify the scheduler.
     else:
-      _logger().info("Successfully ran function on worker.", extra={'event_type': 'TASK'})
+      _logger().info("Successfully ran function on worker.", extra={"event_type": "TASK"})
 
   while True:
     command, command_args = raylib.wait_for_next_message(worker.handle)
