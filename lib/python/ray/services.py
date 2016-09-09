@@ -141,7 +141,7 @@ def start_worker(node_ip_address, worker_path, scheduler_address, objstore_addre
   if cleanup:
     all_processes.append(p)
 
-def start_node(scheduler_address, node_ip_address, num_workers, worker_path=None, cleanup=False):
+def start_node(scheduler_address, node_ip_address, num_workers, worker_path=None, cleanup=False, redis_host="localhost", redis_port=6379):
   """Start an object store and associated workers in the cluster setting.
 
   This starts an object store and the associated workers when Ray is being used
@@ -158,15 +158,17 @@ def start_node(scheduler_address, node_ip_address, num_workers, worker_path=None
     cleanup (bool): If cleanup is True, then the processes started by this
       command will be killed when the process that imported services exits.
   """
-  start_objstore(scheduler_address, node_ip_address, cleanup=cleanup)
+  start_objstore(scheduler_address, node_ip_address, cleanup=cleanup,
+                 redis_host=redis_host, redis_port=redis_port)
   time.sleep(0.2)
   if worker_path is None:
     worker_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../scripts/default_worker.py")
   for _ in range(num_workers):
-    start_worker(node_ip_address, worker_path, scheduler_address, cleanup=cleanup)
+    start_worker(node_ip_address, worker_path, scheduler_address,
+                 cleanup=cleanup, redis_host=redis_host, redis_port=redis_port)
   time.sleep(0.5)
 
-def start_workers(scheduler_address, objstore_address, num_workers, worker_path):
+def start_workers(scheduler_address, objstore_address, num_workers, worker_path, redis_host="localhost", redis_port=6379):
   """Start a new set of workers on this node.
 
   Start a new set of workers on this node. This assumes that the scheduler is
@@ -184,7 +186,8 @@ def start_workers(scheduler_address, objstore_address, num_workers, worker_path)
   """
   node_ip_address = objstore_address.split(":")[0]
   for _ in range(num_workers):
-    start_worker(node_ip_address, worker_path, scheduler_address, cleanup=False)
+    start_worker(node_ip_address, worker_path, scheduler_address,
+                 cleanup=False, redis_host=redis_host, redis_port=redis_port)
 
 def start_redis(cleanup):
   """

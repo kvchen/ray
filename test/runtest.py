@@ -83,15 +83,22 @@ class ObjStoreTest(unittest.TestCase):
   # Test setting up object stores, transfering data between them and retrieving data to a client
   def testObjStore(self):
     node_ip_address = "127.0.0.1"
-    scheduler_address = ray.services.start_ray_local(num_objstores=2, num_workers=0, worker_path=None)
-    ray.connect(node_ip_address, scheduler_address, mode=ray.SCRIPT_MODE)
+    scheduler_address, redis_port = ray.services.start_ray_local(num_objstores=2,
+                                                                 num_workers=0,
+                                                                 worker_path=None)
+    ray.connect(node_ip_address, scheduler_address, mode=ray.SCRIPT_MODE,
+                redis_port=redis_port)
     objstore_addresses = [objstore_info["address"] for objstore_info in ray.scheduler_info()["objstores"]]
     w1 = ray.worker.Worker()
     w2 = ray.worker.Worker()
     ray.reusables._cached_reusables = [] # This is a hack to make the test run.
-    ray.connect(node_ip_address, scheduler_address, objstore_address=objstore_addresses[0], mode=ray.SCRIPT_MODE, worker=w1)
+    ray.connect(node_ip_address, scheduler_address,
+                objstore_address=objstore_addresses[0], mode=ray.SCRIPT_MODE,
+                worker=w1, redis_port=redis_port)
     ray.reusables._cached_reusables = [] # This is a hack to make the test run.
-    ray.connect(node_ip_address, scheduler_address, objstore_address=objstore_addresses[1], mode=ray.SCRIPT_MODE, worker=w2)
+    ray.connect(node_ip_address, scheduler_address,
+                objstore_address=objstore_addresses[1], mode=ray.SCRIPT_MODE,
+                worker=w2, redis_port=redis_port)
 
     # putting and getting an object shouldn't change it
     for data in RAY_TEST_OBJECTS:
@@ -628,11 +635,15 @@ class ClusterAttachingTest(unittest.TestCase):
     node_ip_address = "127.0.0.1"
     scheduler_port = np.random.randint(40000, 50000)
     scheduler_address = "{}:{}".format(node_ip_address, scheduler_port)
-    ray.services.start_scheduler(scheduler_address, cleanup=True)
+    redis_port = ray.services.start_redis(cleanup=True)
+    ray.services.start_scheduler(scheduler_address, cleanup=True,
+                                 redis_port=redis_port)
     time.sleep(0.1)
-    ray.services.start_node(scheduler_address, node_ip_address, num_workers=1, cleanup=True)
+    ray.services.start_node(scheduler_address, node_ip_address, num_workers=1,
+                            cleanup=True, redis_port=redis_port)
 
-    ray.init(node_ip_address=node_ip_address, scheduler_address=scheduler_address)
+    ray.init(node_ip_address=node_ip_address,
+             scheduler_address=scheduler_address, redis_port=redis_port)
 
     @ray.remote([int], [int])
     def f(x):
@@ -645,13 +656,16 @@ class ClusterAttachingTest(unittest.TestCase):
     node_ip_address = "127.0.0.1"
     scheduler_port = np.random.randint(40000, 50000)
     scheduler_address = "{}:{}".format(node_ip_address, scheduler_port)
-    ray.services.start_scheduler(scheduler_address, cleanup=True)
+    redis_port = ray.services.start_redis(cleanup=True)
+    ray.services.start_scheduler(scheduler_address, cleanup=True,
+                                 redis_port=redis_port)
     time.sleep(0.1)
-    ray.services.start_node(scheduler_address, node_ip_address, num_workers=5, cleanup=True)
-    ray.services.start_node(scheduler_address, node_ip_address, num_workers=5, cleanup=True)
-    ray.services.start_node(scheduler_address, node_ip_address, num_workers=5, cleanup=True)
+    for _ in range(3):
+      ray.services.start_node(scheduler_address, node_ip_address, num_workers=5,
+                              cleanup=True, redis_port=redis_port)
 
-    ray.init(node_ip_address=node_ip_address, scheduler_address=scheduler_address)
+    ray.init(node_ip_address=node_ip_address,
+             scheduler_address=scheduler_address, redis_port=redis_port)
 
     @ray.remote([int], [int])
     def f(x):
