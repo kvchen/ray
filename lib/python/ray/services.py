@@ -4,9 +4,11 @@ import time
 import subprocess32 as subprocess
 import string
 import random
+import socket
 
 # Ray modules
 import config
+import redis
 
 _services_env = os.environ.copy()
 _services_env["PATH"] = os.pathsep.join([os.path.dirname(os.path.abspath(__file__)), _services_env["PATH"]])
@@ -19,12 +21,28 @@ _services_env["GRPC_VERBOSITY"] = "ERROR"
 all_processes = []
 
 TIMEOUT_SECONDS = 5
+REDIS_SERVER_CMD = "redis-server"
 
 def address(host, port):
   return host + ":" + str(port)
 
 def new_scheduler_port():
   return random.randint(10000, 65535)
+
+def available_port():
+  """Return an available port on localhost.
+
+  Note that this is a best guess at an available port, since someone else can
+  bind to this port in the meantime.
+  """
+  s = socket.socket()
+  s.bind(('', 0))
+  _, port = s.getsockname()
+  return port
+
+def save_redis(redis_port):
+  r = redis.StrictRedis(port=redis_port)
+  r.save()
 
 def cleanup():
   """When running in local mode, shutdown the Ray processes.
@@ -39,6 +57,8 @@ def cleanup():
   for p in all_processes:
     if p.poll() is not None: # process has already terminated
       continue
+    if p.args[0] == REDIS_SERVER_CMD:
+      save_redis(int(p.args[2]))
     p.kill()
     time.sleep(0.05) # is this necessary?
     if p.poll() is not None:
@@ -166,7 +186,38 @@ def start_workers(scheduler_address, objstore_address, num_workers, worker_path)
   for _ in range(num_workers):
     start_worker(node_ip_address, worker_path, scheduler_address, cleanup=False)
 
-def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0, worker_path=None, redis_host="localhost", redis_port=6379):
+def start_redis(cleanup):
+  """
+  Start a new Redis instance on this node. Retries until an available port is
+  found.
+
+  Args:
+    cleanup (bool): True if using Ray in local mode. If cleanup is true, then
+      this process will be killed by serices.cleanup() when the Python process
+      that imported services exits.
+
+  Returns:
+    The port of the launched Redis instance.
+  """
+  rdb_path = config.get_log_file_path("redis.rdb")
+  rdb_dir, rdb_filename = os.path.split(rdb_path)
+  with open(os.devnull, 'w') as FNULL:
+    while True:
+      redis_port = available_port()
+      p = subprocess.Popen([REDIS_SERVER_CMD,
+                            "--port", str(redis_port),
+                            "--dir", rdb_dir,
+                            "--dbfilename", rdb_filename],
+                           stdout=FNULL,
+                           env=_services_env)
+      time.sleep(0.5)
+      if not p.poll():
+        break
+  if cleanup:
+    all_processes.append(p)
+  return redis_port
+
+def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0, worker_path=None):
   """Start Ray in local mode.
 
   This method starts Ray in local mode (as opposed to cluster mode, which is
@@ -180,18 +231,19 @@ def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0,
       worker.
 
   Returns:
-    The address of the scheduler and the addresses of all of the object stores.
+    The address of the scheduler and the address of the Redis instance.
   """
   if worker_path is None:
     worker_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../scripts/default_worker.py")
   if num_workers > 0 and num_objstores < 1:
     raise Exception("Attempting to start a cluster with {} workers per object store, but `num_objstores` is {}.".format(num_objstores))
-  scheduler_address = address(node_ip_address, new_scheduler_port())
-  start_scheduler(scheduler_address, cleanup=True, redis_host=redis_host, redis_port=redis_port)
+  redis_port = start_redis(cleanup=True)
+  scheduler_address = address(node_ip_address, available_port())
+  start_scheduler(scheduler_address, cleanup=True, redis_port=redis_port)
   time.sleep(0.1)
   # create objstores
   for i in range(num_objstores):
-    start_objstore(scheduler_address, node_ip_address, cleanup=True, redis_host=redis_host, redis_port=redis_port)
+    start_objstore(scheduler_address, node_ip_address, cleanup=True, redis_port=redis_port)
     time.sleep(0.2)
     if i < num_objstores - 1:
       num_workers_to_start = num_workers / num_objstores
@@ -200,7 +252,7 @@ def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0,
       # remaining number of workers.
       num_workers_to_start = num_workers - (num_objstores - 1) * (num_workers / num_objstores)
     for _ in range(num_workers_to_start):
-      start_worker(node_ip_address, worker_path, scheduler_address, cleanup=True, redis_host=redis_host, redis_port=redis_port)
+      start_worker(node_ip_address, worker_path, scheduler_address, cleanup=True, redis_port=redis_port)
     time.sleep(0.3)
 
-  return scheduler_address
+  return scheduler_address, redis_port

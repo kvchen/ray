@@ -5,7 +5,7 @@ FROM ubuntu:xenial
 RUN apt-get update
 RUN apt-get -y install apt-utils
 RUN apt-get -y install sudo
-RUN apt-get install -y git cmake build-essential autoconf curl libtool python-dev python-numpy python-pip libboost-all-dev unzip graphviz
+RUN apt-get install -y git cmake build-essential autoconf curl libtool python-dev python-numpy python-pip libboost-all-dev unzip graphviz redis-server
 RUN pip install ipython typing funcsigs subprocess32 protobuf colorama graphviz cloudpickle redis
 RUN adduser --gecos --ingroup ray-user --disabled-login --gecos ray-user
 RUN adduser ray-user sudo

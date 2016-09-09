@@ -650,6 +650,10 @@ def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_
       provided otherwise.
     driver_mode (Optional[bool]): The mode in which to start the driver. This
       should be one of SCRIPT_MODE, PYTHON_MODE, and SILENT_MODE.
+    redis_host (Optional[str]): The host of a running Redis instance. If
+      start_ray_local is True, this argument is ignored.
+    redis_port (Optional[int]): The port of a running Redis instance. If
+      start_ray_local is True, this argument is ignored.
 
     raises:
       Exception: An exception is raised if an inappropriate combination of
@@ -673,7 +677,9 @@ def init(start_ray_local=False, num_workers=None, num_objstores=None, scheduler_
     num_objstores = 1 if num_objstores is None else num_objstores
     # Start the scheduler, object store, and some workers. These will be killed
     # by the call to cleanup(), which happens when the Python script exits.
-    scheduler_address = services.start_ray_local(num_objstores=num_objstores, num_workers=num_workers, worker_path=None, redis_host=redis_host, redis_port=redis_port)
+    scheduler_address, redis_port = services.start_ray_local(num_objstores=num_objstores,
+                                                             num_workers=num_workers,
+                                                             worker_path=None)
   else:
     # In this case, there is an existing scheduler and object store, and we do
     # not need to start any processes.

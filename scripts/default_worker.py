@@ -8,7 +8,7 @@ parser = argparse.ArgumentParser(description="Parse addresses for the worker to 
 parser.add_argument("--node-ip-address", required=True, type=str, help="the ip address of the worker's node")
 parser.add_argument("--scheduler-address", required=True, type=str, help="the scheduler's address")
 parser.add_argument("--objstore-address", type=str, help="the objstore's address")
-parser.add_argument("--redis-host", type=str, default='localhost', help="Redis host")
+parser.add_argument("--redis-host", type=str, default="localhost", help="Redis host")
 parser.add_argument("--redis-port", type=int, default=6379, help="Redis port")
 
 if __name__ == "__main__":

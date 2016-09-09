@@ -16,7 +16,7 @@ install [Anaconda](https://www.continuum.io/downloads).
 
 ```
 brew update
-brew install git cmake automake autoconf libtool boost graphviz
+brew install git cmake automake autoconf libtool boost graphviz redis
 sudo easy_install pip
 sudo pip install ipython --user
 sudo pip install numpy typing funcsigs subprocess32 protobuf colorama graphviz cloudpickle redis --ignore-installed six
