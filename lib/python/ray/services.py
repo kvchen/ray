@@ -204,18 +204,14 @@ def start_redis(cleanup):
   """
   rdb_path = config.get_log_file_path("redis.rdb")
   rdb_dir, rdb_filename = os.path.split(rdb_path)
+  redis_port = available_port()
   with open(os.devnull, 'w') as FNULL:
-    while True:
-      redis_port = available_port()
-      p = subprocess.Popen([REDIS_SERVER_CMD,
-                            "--port", str(redis_port),
-                            "--dir", rdb_dir,
-                            "--dbfilename", rdb_filename],
-                           stdout=FNULL,
-                           env=_services_env)
-      time.sleep(0.5)
-      if not p.poll():
-        break
+    p = subprocess.Popen([REDIS_SERVER_CMD,
+                          "--port", str(redis_port),
+                          "--dir", rdb_dir,
+                          "--dbfilename", rdb_filename],
+                         stdout=FNULL,
+                         env=_services_env)
   if cleanup:
     all_processes.append(p)
   return redis_port
