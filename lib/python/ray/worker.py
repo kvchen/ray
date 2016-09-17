@@ -310,6 +310,7 @@ class Worker(object):
   def __init__(self):
     """Initialize a Worker object."""
     self.functions = {}
+    self.num_return_vals = {}
     self.handle = None
     self.mode = None
     self.cached_remote_functions = []
@@ -348,27 +349,18 @@ class Worker(object):
       objectid (object_id.ObjectID): The object ID of the value to be put.
       value (serializable object): The value to put in the object store.
     """
-    # We put the value into a list here because in arrow the concept of
-    # "serializing a single object" does not exits.
+    # Serialize and put the object
     schema, size, serialized = numbuf_serialize(value)
+    size = size + 4096 * 4 + 8 # The last 8 bytes are for the metadata offset. This is temporary.
+    buff = self.plasma_client.create(objectid.object_id, size, buffer(schema))
+    data = np.frombuffer(buff, dtype="byte")[8:]
+    metadata_offset = libnumbuf.write_to_buffer(serialized, memoryview(data))
+    np.frombuffer(buff, dtype="int64", count=1)[0] = metadata_offset
+    self.plasma_client.seal(objectid.object_id)
+
     global contained_objectids
     # raylib.add_contained_objectids(self.handle, objectid, contained_objectids)
     contained_objectids = []
-    # TODO(pcm): Right now, metadata is serialized twice, change that in the future
-    # in the following line, the "8" is for storing the metadata size,
-    # the len(schema) is for storing the metadata and the 8192 is for storing
-    # the metadata in the batch (see INITIAL_METADATA_SIZE in arrow)
-    size = size + 8 + len(schema) + 4096 * 4
-    buff = self.plasma_client.create(objectid.object_id, size)
-    # write the metadata length
-    np.frombuffer(buff, dtype="int64", count=1)[0] = len(schema)
-    # metadata buffer
-    metadata = np.frombuffer(buff, dtype="byte", offset=8, count=len(schema))
-    # write the metadata
-    metadata[:] = schema
-    data = np.frombuffer(buff, dtype="byte")[8 + len(schema):]
-    metadata_offset = libnumbuf.write_to_buffer(serialized, memoryview(data))
-    self.plasma_client.seal(objectid.object_id)
 
   def get_object(self, objectid):
     """Get the value in the local object store associated with objectid.
@@ -379,23 +371,25 @@ class Worker(object):
     Args:
       objectid (object_id.ObjectID): The object ID of the value to retrieve.
     """
-    # TODO(rkn): Also need to get metadata offset!!
-    buff = self.plasma_client.get(objetid.object_id)
-
-    metadata_size = int(np.frombuffer(buff, dtype="int64", count=1)[0])
-    metadata = np.frombuffer(buff, dtype="byte", offset=8, count=metadata_size)
-    data = np.frombuffer(buff, dtype="byte")[8 + metadata_size:]
+    buff = self.plasma_client.get(objectid.object_id)
+    metadata = self.plasma_client.get_metadata(objectid.object_id)
+    metadata_size = len(metadata)
+    data = np.frombuffer(buff, dtype="byte")[8:]
+    metadata_offset = int(np.frombuffer(buff, dtype="int64", count=1)[0])
     serialized = libnumbuf.read_from_buffer(memoryview(data), bytearray(metadata), metadata_offset)
+    #deserialized = libnumbuf.deserialize_list(serialized)
+
     # If there is currently no ObjectFixture for this ObjectID, then create a
     # new one. The object_fixtures object is a WeakValueDictionary, so entries
     # will be discarded when there are no strong references to their values.
     # We create object_fixture outside of the assignment because if we created
     # it inside the assignement it would immediately go out of scope.
     object_fixture = None
-    if objectid.id not in object_fixtures:
+    segmentid = 1234 # TODO(rkn): Get a real segment id!!
+    if objectid.object_id not in object_fixtures:
       object_fixture = ObjectFixture(objectid, segmentid, self.handle)
-      object_fixtures[objectid.id] = object_fixture
-    deserialized = libnumbuf.deserialize_list(serialized, object_fixtures[objectid.id])
+      object_fixtures[objectid.object_id] = object_fixture
+    deserialized = libnumbuf.deserialize_list(serialized, object_fixtures[objectid.object_id])
     # Unwrap the object from the list (it was wrapped put_object)
     assert len(deserialized) == 1
     result = deserialized[0]
@@ -432,9 +426,18 @@ class Worker(object):
     #task_capsule = raylib.serialize_task(self.handle, func_name, serialized_args)
     #objectids = raylib.submit_task(self.handle, task_capsule)
     # TODO(rkn): The below isn't a real solution. Need to serialize properly.
-    serialized_task = pickling.dumps((func_name, serialized_args))
-    self.redis_client.rpush("TaskQueue", serialized_task)
-    return objectids
+
+    object_ids = [object_id.random_object_id() for _ in range(self.num_return_vals[func_name])]
+
+    task_id = func_name
+    function_id = func_name
+    key = "graph:{}".format(task_id)
+    self.redis_client.hset(key, "function_id", function_id)
+    self.redis_client.hset(key, "args", pickling.dumps(serialized_args))
+    self.redis_client.hset(key, "return_ids", pickling.dumps(object_ids))
+
+    self.redis_client.rpush("TaskQueue", task_id)
+    return object_ids
 
   def run_function_on_all_workers(self, function):
     """Run arbitrary code on all of the workers.
@@ -454,8 +457,12 @@ class Worker(object):
     function(self)
     # Then run the function on all of the workers.
     if self.mode in [SCRIPT_MODE, SILENT_MODE]:
-      self.redis_client.rpush("FunctionsToRun", pickling.dumps(function))
-      #raylib.run_function_on_all_workers(self.handle, pickling.dumps(function))
+
+      function_to_run_id = np.random.randint(0, 1000)
+      key = "FunctionsToRun:{}".format(function_to_run_id)
+      self.redis_client.hset(key, "function_id", function_to_run_id)
+      self.redis_client.hset(key, "function", pickling.dumps(function))
+      self.redis_client.rpush("Exports", key)
 
 global_worker = Worker()
 """Worker: The global Worker object for this worker process.
@@ -495,8 +502,9 @@ def check_connected(worker=global_worker):
   Raises:
     Exception: An exception is raised if the worker is not connected.
   """
-  if worker.handle is None and worker.mode != PYTHON_MODE:
-    raise RayConnectionError("This command cannot be called before a Ray cluster has been started. You can start one with 'ray.init(start_ray_local=True, num_workers=1)'.")
+  # TODO(rkn): Bring this method back.
+  #if worker.handle is None and worker.mode != PYTHON_MODE:
+    #raise RayConnectionError("This command cannot be called before a Ray cluster has been started. You can start one with 'ray.init(start_ray_local=True, num_workers=1)'.")
 
 def print_failed_task(task_status):
   """Print information about failed tasks.
@@ -767,7 +775,7 @@ def connect(node_ip_address, scheduler_address, redis_address, object_store_name
     worker.run_function_on_all_workers(lambda worker: sys.path.insert(1, current_directory))
     # Export cached remote functions to the workers.
     for function_name, function_to_export in worker.cached_remote_functions:
-      worker.redis_client.rpush("RemoteFunctions", to_export)
+      worker.redis_client.rpush("RemoteFunction", to_export)
     # Export cached reusable variables to the workers.
     for name, reusable_variable in reusables._cached_reusables:
       _export_reusable_variable(name, reusable_variable)
@@ -830,13 +838,14 @@ def get(objectid, worker=global_worker):
   if worker.mode == PYTHON_MODE:
     return objectid # In PYTHON_MODE, ray.get is the identity operation (the input will actually be a value not an objectid)
   if isinstance(objectid, list):
-    [worker.plasma_client.fetch(x.objectid) for x in objectid]
+    # TODO(rkn): These fetch commands are necessary for the multi object store setting.
+    #[worker.plasma_client.fetch(x.objectid) for x in objectid]
     values = [worker.get_object(x) for x in objectid]
     for i, value in enumerate(values):
       if isinstance(value, RayTaskError):
         raise RayGetError(objectid[i], value)
     return values
-  worker.plasma_client.fetch(objectid.objectid)
+  #worker.plasma_client.fetch(objectid.objectid)
   value = worker.get_object(objectid)
   if isinstance(value, RayTaskError):
     # If the result is a RayTaskError, then the task that created this object
@@ -926,13 +935,15 @@ def main_loop(worker=global_worker):
   process. The worker executes the command, notifies the scheduler of any errors
   that occurred while executing the command, and waits for the next command.
   """
-  time.sleep(10000)
+
+  """
   if not raylib.connected(worker.handle):
     raise Exception("Worker is attempting to enter main_loop but has not been connected yet.")
   # Notify the scheduler that the worker is ready to start receiving tasks.
   raylib.ready_for_new_task(worker.handle)
+  """
 
-  def process_task(task): # wrapping these lines in a function should cause the local variables to go out of scope more quickly, which is useful for inspecting reference counts
+  def process_task(function_id, function_name, pickled_serialized_args, serialized_return_objectids): # wrapping these lines in a function should cause the local variables to go out of scope more quickly, which is useful for inspecting reference counts
     """Execute a task assigned to this worker.
 
     This method deserializes a task from the scheduler, and attempts to execute
@@ -943,14 +954,26 @@ def main_loop(worker=global_worker):
     After the task executes, the worker resets any reusable variables that were
     accessed by the task.
     """
-    function_name, serialized_args, return_objectids = task
+
+    print "Running {} with args "
+    #function_name, serialized_args, return_objectids = task
     try:
+      serialized_args = pickling.loads(pickled_serialized_args)
+      return_objectids = pickling.loads(serialized_return_objectids)
+      print "SERIALIZED_ARGS = " + str(serialized_args)
+      print "return_objectids = " + str(return_objectids)
       arguments = get_arguments_for_execution(worker.functions[function_name], serialized_args, worker) # get args from objstore
-      outputs = worker.functions[function_name].executor(arguments) # execute the function
+      print "arguments = " + str(arguments)
+      print "function_id " + str(function_id)
+      print "function is " + str(worker.functions[function_id])
+      print "executor is " +  str(worker.functions[function_id].executor)
+      outputs = worker.functions[function_id].executor(arguments) # execute the function
       if len(return_objectids) == 1:
         outputs = (outputs,)
       store_outputs_in_objstore(return_objectids, outputs, worker) # store output in local object store
-    except Exception as e:
+      print "Storing outputs {}".format(outputs)
+    except TypeError as e:
+    #except Exception as e:
       # If the task threw an exception, then record the traceback. We determine
       # whether the exception was thrown in the task execution by whether the
       # variable "arguments" is defined.
@@ -963,7 +986,7 @@ def main_loop(worker=global_worker):
       _logger().info("While running function {}, worker threw exception with message: \n\n{}\n".format(function_name, str(failure_object)))
     # Notify the scheduler that the task is done. This happens regardless of
     # whether the task succeeded or failed.
-    raylib.ready_for_new_task(worker.handle)
+    #raylib.ready_for_new_task(worker.handle)
     try:
       # Reinitialize the values of reusable variables that were used in the task
       # above so that changes made to their state do not affect other tasks.
@@ -975,10 +998,10 @@ def main_loop(worker=global_worker):
       worker.redis_client.rpush("Failures", traceback_str)
       _logger().info("While attempting to reinitialize the reusable variables after running function {}, the worker threw exception with message: \n\n{}\n".format(function_name, traceback_str))
 
-  def process_remote_function(function_name, serialized_function):
+  def process_remote_function(function_id, function_name, serializd_function, num_return_vals, module):
     """Import a remote function."""
     try:
-      function, num_return_vals, module = pickling.loads(serialized_function)
+      function = pickling.loads(serialized_function)
     except:
       # If an exception was thrown when the remote function was imported, we
       # record the traceback and notify the scheduler of the failure.
@@ -989,20 +1012,23 @@ def main_loop(worker=global_worker):
     else:
       # TODO(rkn): Why is the below line necessary?
       function.__module__ = module
-      assert function_name == "{}.{}".format(function.__module__, function.__name__), "The remote function name does not match the name that was passed in."
-      worker.functions[function_name] = remote(num_return_vals=num_return_vals)(function)
+      function_name = "{}.{}".format(function.__module__, function.__name__)
+      worker.functions[function_id] = remote(num_return_vals=num_return_vals)(function)
       _logger().info("Successfully imported remote function {}.".format(function_name))
       # Noify the scheduler that the remote function imported successfully.
       # We pass an empty error message string because the import succeeded.
-      worker.redis_client.rpush("Function:{}".format(function_name), worker.worker_address)
-      worker.redis_client.hset("Function:{}".format(function_name), "num_return_vals", str(num_return_vals))
+      # TODO(rkn): The below needs to identify the worker somehow...
+      worker.redis_client.rpush("Function:{}".format(function_name), "hi")
+      worker.redis_client.hset("Function:{}:num_returns".format(function_name), "num_return_vals", str(num_return_vals))
+      print "  Successfully processed remote function."
 
-  def process_reusable_variable(reusable_variable_name, initializer_str, reinitializer_str):
+  def process_reusable_variable(reusable_variable_name, serialized_initializer, serialized_reinitializer):
     """Import a reusable variable."""
     try:
-      initializer = pickling.loads(initializer_str)
-      reinitializer = pickling.loads(reinitializer_str)
+      initializer = pickling.loads(serialized_initializer)
+      reinitializer = pickling.loads(serialized_reinitializer)
       reusables.__setattr__(reusable_variable_name, Reusable(initializer, reinitializer))
+      print "  Successfully imported reusable variable."
     except:
       # If an exception was thrown when the reusable variable was imported, we
       # record the traceback and notify the scheduler of the failure.
@@ -1020,6 +1046,7 @@ def main_loop(worker=global_worker):
       function = pickling.loads(serialized_function)
       # Run the function.
       function(worker)
+      print "  Successfully ran function to run"
     except:
       # If an exception was thrown when the function was run, we record the
       # traceback and notify the scheduler of the failure.
@@ -1031,30 +1058,59 @@ def main_loop(worker=global_worker):
     else:
       _logger().info("Successfully ran function on worker.")
 
+  num_tasks = 0
+  num_exports = 0
+  num_remote_functions = 0
+  num_reusable_variables = 0
+  num_functions_to_run = 0
+
   while True:
-    command, command_args = raylib.wait_for_next_message(worker.handle)
-    try:
-      if command == "die":
-        # We use this as a mechanism to allow the scheduler to kill workers.
-        _logger().info("Received a 'die' command, and will exit now.")
-        break
-      elif command == "task":
-        process_task(command_args)
-      elif command == "function":
-        function_name, serialized_function = command_args
-        process_remote_function(function_name, serialized_function)
-      elif command == "reusable_variable":
-        name, initializer_str, reinitializer_str = command_args
-        process_reusable_variable(name, initializer_str, reinitializer_str)
-      elif command == "function_to_run":
-        serialized_function = command_args
+
+    time.sleep(0.1)
+    if worker.redis_client.llen("TaskQueue") > num_tasks:
+      print "GETTING Task"
+      task_id = worker.redis_client.lindex("TaskQueue", num_tasks)
+      key = "graph:{}".format(task_id)
+      function_id = worker.redis_client.hget(key, "function_id")
+      function_name = function_id
+      serialized_args = worker.redis_client.hget(key, "args")
+      serialized_return_ids = worker.redis_client.hget(key, "return_ids")
+
+      process_task(function_id, function_name, serialized_args, serialized_return_ids)
+
+      num_tasks += 1
+
+    if worker.redis_client.llen("Exports") > num_exports:
+      print "GETTING Export"
+      key = worker.redis_client.lindex("Exports", num_exports)
+
+      if key.split(":")[0] == "RemoteFunction":
+        print "  Export is RemoteFunction"
+        remote_function_id = worker.redis_client.hget(key, "function_id")
+        remote_function_name = worker.redis_client.hget(key, "name")
+        remote_function_module = worker.redis_client.hget(key, "module")
+        remote_function = pickling.loads(worker.redis_client.hget(key, "function"))
+        num_return_vals = worker.redis_client.hget(key, "num_return_vals")
+
+        process_remote_function(remote_function_id, remote_function_name, remote_function, num_return_vals, remote_function_module)
+      elif key.split(":")[0] == "ReusableVariables":
+        print "  Export is ReusableVariable"
+        reusable_variable_name = worker.redis_client.hget(key, "name")
+        serialized_initializer = worker.redis_client.hget(key, "initializer")
+        serialized_reinitializer = worker.redis_client.hget(key, "reinitializer")
+
+        process_reusable_variable(name, serialized_initializer, serialized_reinitializer)
+
+      elif key.split(":")[0] == "FunctionsToRun":
+        print "  Export is FunctionToRun"
+
+        function_id = worker.redis_client.hget(key, "function_id")
+        serialized_function = worker.redis_client.hget(key, "function")
+
         process_function_to_run(serialized_function)
-      else:
-        _logger().info("Reached the end of the if-else loop in the main loop. This should be unreachable.")
-        assert False, "This code should be unreachable."
-    finally:
-      # Allow releasing the variables BEFORE we wait for the next message or exit the block
-      del command_args
+
+      num_exports += 1
+
 
 def _submit_task(func_name, args, worker=global_worker):
   """This is a wrapper around worker.submit_task.
@@ -1095,7 +1151,14 @@ def _export_reusable_variable(name, reusable, worker=global_worker):
   """
   if _mode(worker) not in [SCRIPT_MODE, SILENT_MODE]:
     raise Exception("_export_reusable_variable can only be called on a driver.")
-  worker.redis_client.rpush("ReusableVariables", pickling.dumps((name, reusable.initializer, reusable.reinitializer)))
+
+  reusable_variable_id = name
+  key = "ReusableVariables:".format(reusable_variable_id)
+  worker.redis_client.hset(key, "name", name)
+  worker.redis_client.hset(key, "initializer", pickling.dumps(reusable.initializer))
+  worker.redis_client.hset(key, "reinitializer", pickling.dumps(reusable.reinitializer))
+
+  worker.redis_client.rpush("Exports", key)
 
 def remote(*args, **kwargs):
   """This decorator is used to create remote functions.
@@ -1162,9 +1225,20 @@ def remote(*args, **kwargs):
           if func_name_global_valid: func.__globals__[func.__name__] = func_name_global_value
           else: del func.__globals__[func.__name__]
       if worker.mode in [SCRIPT_MODE, SILENT_MODE]:
-        worker.redis_client.rpush("RemoteFunctions", to_export)
+        #worker.redis_client.rpush("RemoteFunctions", to_export)
+
+        function_id = func_name
+        key = "RemoteFunction:{}".format(function_id)
+        worker.redis_client.hset(key, "function_id", function_id)
+        worker.redis_client.hset(key, "name", func_name)
+        worker.redis_client.hset(key, "module", func.__module__)
+        worker.redis_client.hset(key, "function", pickling.dumps(func))
+        worker.redis_client.hset(key, "num_return_vals", num_return_vals)
+        worker.redis_client.rpush("Exports", key)
+
       elif worker.mode is None:
         worker.cached_remote_functions.append((func_name, to_export))
+      worker.num_return_vals[func_name] = num_return_vals
       return func_invoker
 
     return remote_decorator
