@@ -18,6 +18,10 @@ else
   exit 1
 fi
 
+echo "building plasma"
+cd $TP_DIR/plasma
+make
+
 echo "building arrow"
 cd $TP_DIR/arrow/cpp
 source setup_build_env.sh
@@ -32,10 +36,6 @@ mkdir -p build
 cd $TP_DIR/numbuf/build
 cmake ..
 make VERBOSE=1 -j$PARALLEL
-
-echo "building GRPC"
-cd $TP_DIR/grpc
-make static HAS_SYSTEM_PROTOBUF=false HAS_SYSTEM_ZLIB=false HAS_SYSTEM_OPENSSL_ALPN=false HAS_SYSTEM_OPENSSL_NPN=false -j$PARALLEL
 
 echo "building hiredis"
 cd $TP_DIR/hiredis

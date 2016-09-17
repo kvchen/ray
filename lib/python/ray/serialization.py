@@ -1,6 +1,5 @@
 import numpy as np
 import pickling
-import libraylib as raylib
 import libnumbuf
 
 def is_argument_serializable(value):
