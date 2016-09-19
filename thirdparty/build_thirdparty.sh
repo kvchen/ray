@@ -18,6 +18,10 @@ else
   exit 1
 fi
 
+echo "building common"
+cd $TP_DIR/common
+make
+
 echo "building plasma"
 cd $TP_DIR/plasma
 make

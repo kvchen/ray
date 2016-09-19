@@ -1,5 +1,8 @@
 [submodule "thirdparty/plasma"]
   path = thirdparty/plasma
+  url = https://github.com/ray-project/common.git
+[submodule "thirdparty/plasma"]
+  path = thirdparty/plasma
   url = https://github.com/ray-project/plasma.git
 [submodule "thirdparty/numbuf"]
 	path = thirdparty/numbuf
@@ -11,6 +14,3 @@
 	path = thirdparty/python
 	url = https://github.com/austinsc/python.git
 	ignore = dirty
-[submodule "thirdparty/hiredis"]
-	path = thirdparty/hiredis
-	url = https://github.com/redis/hiredis.git

@@ -39,7 +39,8 @@ def cleanup():
   """
   global all_processes
   successfully_shut_down = True
-  for p in all_processes:
+  # Terminate the processes in reverse order.
+  for p in all_processes[::-1]:
     if p.poll() is not None: # process has already terminated
       continue
     p.kill()
@@ -58,30 +59,31 @@ def cleanup():
   all_processes = []
 
 def start_redis(port):
-  p = subprocess.Popen(["redis-server", "--port", str(port)])
+  redis_filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../thirdparty/common/thirdparty/redis-3.2.3/src/redis-server")
+  p = subprocess.Popen([redis_filepath, "--port", str(port)])
   if cleanup:
     all_processes.append(p)
 
-def start_scheduler(scheduler_address, cleanup):
+def start_scheduler(redis_address, cleanup):
   """This method starts a scheduler process.
 
   Args:
-    scheduler_address (str): The ip address and port to use for the scheduler.
     cleanup (bool): True if using Ray in local mode. If cleanup is true, then
       this process will be killed by serices.cleanup() when the Python process
       that imported services exits.
   """
-  scheduler_port = scheduler_address.split(":")[1]
-  p = subprocess.Popen(["scheduler", scheduler_address, "--log-file-name", config.get_log_file_path("scheduler-" + scheduler_port + ".log")], env=_services_env)
+  scheduler_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../lib/python/ray/scheduler.py")
+  p = subprocess.Popen(["python", scheduler_path, "--redis-address", redis_address])
+
+  #scheduler_port = scheduler_address.split(":")[1]
+  #p = subprocess.Popen(["scheduler", scheduler_address, "--log-file-name", config.get_log_file_path("scheduler-" + scheduler_port + ".log")], env=_services_env)
   if cleanup:
     all_processes.append(p)
 
-def start_objstore(scheduler_address, node_ip_address, cleanup):
+def start_objstore(node_ip_address, cleanup):
   """This method starts an object store process.
 
   Args:
-    scheduler_address (str): The ip address and port of the scheduler to connect
-      to.
     node_ip_address (str): The ip address of the node running the object store.
     cleanup (bool): True if using Ray in local mode. If cleanup is true, then
       this process will be killed by serices.cleanup() when the Python process
@@ -101,7 +103,7 @@ def start_objstore(scheduler_address, node_ip_address, cleanup):
 
   return store_name, manager_port
 
-def start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker_path, scheduler_address, objstore_address=None, cleanup=True):
+def start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker_path, objstore_address=None, cleanup=True):
   """This method starts a worker process.
 
   Args:
@@ -109,8 +111,6 @@ def start_worker(node_ip_address, redis_address, object_store_name, object_store
     redis_address (str): TODO
     worker_path (str): The path of the source code which the worker process will
       run.
-    scheduler_address (str): The ip address and port of the scheduler to connect
-      to.
     objstore_address (Optional[str]): The ip address and port of the object
       store to connect to.
     cleanup (Optional[bool]): True if using Ray in local mode. If cleanup is
@@ -120,7 +120,6 @@ def start_worker(node_ip_address, redis_address, object_store_name, object_store
   command = ["python",
              worker_path,
              "--node-ip-address=" + node_ip_address,
-             "--scheduler-address=" + scheduler_address,
              "--object-store-name=" + object_store_name,
              "--object-store-manager-port=" + str(object_store_manager_port),
              "--redis-address=" + redis_address]
@@ -130,15 +129,13 @@ def start_worker(node_ip_address, redis_address, object_store_name, object_store
   if cleanup:
     all_processes.append(p)
 
-def start_node(scheduler_address, redis_address, node_ip_address, num_workers, worker_path=None, cleanup=False):
+def start_node(redis_address, node_ip_address, num_workers, worker_path=None, cleanup=False):
   """Start an object store and associated workers in the cluster setting.
 
   This starts an object store and the associated workers when Ray is being used
   in the cluster setting. This assumes the scheduler has already been started.
 
   Args:
-    scheduler_address (str): IP address and port of the scheduler (which may run
-      on a different node).
     redis_address (str): TODO
     node_ip_address (str): IP address (without port) of the node this function
       is run on.
@@ -148,12 +145,12 @@ def start_node(scheduler_address, redis_address, node_ip_address, num_workers, w
     cleanup (bool): If cleanup is True, then the processes started by this
       command will be killed when the process that imported services exits.
   """
-  start_objstore(scheduler_address, node_ip_address, cleanup=cleanup)
+  start_objstore(node_ip_address, cleanup=cleanup)
   time.sleep(0.2)
   if worker_path is None:
     worker_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../scripts/default_worker.py")
   for _ in range(num_workers):
-    start_worker(node_ip_address, redis_address, worker_path, scheduler_address, cleanup=cleanup)
+    start_worker(node_ip_address, redis_address, worker_path, cleanup=cleanup)
   time.sleep(0.5)
 
 def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0, worker_path=None):
@@ -179,13 +176,13 @@ def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0,
   redis_port = new_redis_port()
   redis_address = address(node_ip_address, redis_port)
   start_redis(redis_port)
-  scheduler_address = address(node_ip_address, new_scheduler_port())
-  start_scheduler(scheduler_address, cleanup=True)
+  #scheduler_address = address(node_ip_address, new_scheduler_port())
+  start_scheduler(redis_address, cleanup=True)
   time.sleep(0.1)
   # create objstores
   object_store_info = []
   for i in range(num_objstores):
-    object_store_name, object_store_manager_port = start_objstore(scheduler_address, node_ip_address, cleanup=True)
+    object_store_name, object_store_manager_port = start_objstore(node_ip_address, cleanup=True)
     object_store_info.append((object_store_name, object_store_manager_port))
     time.sleep(0.2)
     if i < num_objstores - 1:
@@ -195,7 +192,7 @@ def start_ray_local(node_ip_address="127.0.0.1", num_objstores=1, num_workers=0,
       # remaining number of workers.
       num_workers_to_start = num_workers - (num_objstores - 1) * (num_workers / num_objstores)
     for _ in range(num_workers_to_start):
-      start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker_path, scheduler_address, cleanup=True)
+      start_worker(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker_path, cleanup=True)
     time.sleep(0.3)
 
-  return scheduler_address, redis_address, object_store_info
+  return redis_address, object_store_info
