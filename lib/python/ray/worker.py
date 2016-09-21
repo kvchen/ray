@@ -735,7 +735,12 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
 
   # Register the worker with Redis.
   worker.worker_id = np.random.randint(0, 1000000)
-  worker.redis_client.rpush("Workers", worker.worker_id)
+  if mode == SCRIPT_MODE:
+    worker.redis_client.rpush("Drivers", worker.worker_id)
+  elif mode in [WORKER_MODE, SILENT_MODE]:
+    worker.redis_client.rpush("Workers", worker.worker_id)
+  else:
+    raise Exception("This code should be unreachable.")
 
   random_string = "".join(np.random.choice(list(string.ascii_uppercase + string.digits)) for _ in range(10))
   cpp_log_file_name = config.get_log_file_path("-".join(["worker", random_string, "c++"]) + ".log")
@@ -960,8 +965,7 @@ def main_loop(worker=global_worker):
       if len(return_object_ids) == 1:
         outputs = (outputs,)
       store_outputs_in_objstore(return_object_ids, outputs, worker) # store output in local object store
-    except TypeError as e:
-    #except Exception as e:
+    except Exception as e:
       # If the task threw an exception, then record the traceback. We determine
       # whether the exception was thrown in the task execution by whether the
       # variable "arguments" is defined.
@@ -974,7 +978,7 @@ def main_loop(worker=global_worker):
       _logger().info("While running function {}, worker threw exception with message: \n\n{}\n".format(function_name, str(failure_object)))
     # Notify the scheduler that the task is done. This happens regardless of
     # whether the task succeeded or failed.
-    #raylib.ready_for_new_task(worker.handle)
+    worker.redis_client.publish("ReadyForNewTask", worker.worker_id)
     try:
       # Reinitialize the values of reusable variables that were used in the task
       # above so that changes made to their state do not affect other tasks.
@@ -1093,7 +1097,7 @@ def main_loop(worker=global_worker):
         remote_function_name = worker.redis_client.hget(key, "name")
         remote_function_module = worker.redis_client.hget(key, "module")
         serialized_remote_function = worker.redis_client.hget(key, "function")
-        num_return_vals = worker.redis_client.hget(key, "num_return_vals")
+        num_return_vals = int(worker.redis_client.hget(key, "num_return_vals"))
 
         process_remote_function(remote_function_id, remote_function_name, serialized_remote_function, num_return_vals, remote_function_module)
       elif key.split(":")[0] == "ReusableVariables":

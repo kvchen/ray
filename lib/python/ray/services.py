@@ -60,7 +60,7 @@ def cleanup():
 
 def start_redis(port):
   redis_filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../thirdparty/common/thirdparty/redis-3.2.3/src/redis-server")
-  p = subprocess.Popen([redis_filepath, "--port", str(port)])
+  p = subprocess.Popen([redis_filepath, "--port", str(port), "--loglevel", "warning"])
   if cleanup:
     all_processes.append(p)
 
