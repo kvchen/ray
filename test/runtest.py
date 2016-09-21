@@ -437,6 +437,7 @@ class APITest(unittest.TestCase):
 
     ray.worker.cleanup()
 
+  """
   def testComputationGraph(self):
     ray.init(start_ray_local=True, num_workers=1)
 
@@ -454,6 +455,7 @@ class APITest(unittest.TestCase):
     ray.visualize_computation_graph(view=False)
 
     ray.worker.cleanup()
+  """
 
 class ReferenceCountingTest(unittest.TestCase):
 
