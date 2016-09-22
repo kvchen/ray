@@ -1,6 +1,9 @@
-[submodule "thirdparty/plasma"]
-  path = thirdparty/plasma
+[submodule "thirdparty/common"]
+  path = thirdparty/common
   url = https://github.com/ray-project/common.git
+[submodule "thirdparty/halo"]
+  path = thirdparty/halo
+  url = https://github.com/ray-project/halo.git
 [submodule "thirdparty/plasma"]
   path = thirdparty/plasma
   url = https://github.com/ray-project/plasma.git
