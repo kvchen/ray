@@ -708,6 +708,103 @@ def print_error_messages(worker=global_worker):
       # task_info.
       pass
 
+def process_remote_function(function_id, function_name, serialized_function, num_return_vals, module, worker=global_worker):
+  """Import a remote function."""
+  try:
+    function = pickling.loads(serialized_function)
+  except:
+    # If an exception was thrown when the remote function was imported, we
+    # record the traceback and notify the scheduler of the failure.
+    traceback_str = format_error_message(traceback.format_exc())
+    _logger().info("Failed to import remote function {}. Failed with message: \n\n{}\n".format(function_name, traceback_str))
+    # Notify the scheduler that the remote function failed to import.
+    worker.redis_client.rpush("Failures", traceback_str)
+  else:
+    # TODO(rkn): Why is the below line necessary?
+    function.__module__ = module
+    function_name = "{}.{}".format(function.__module__, function.__name__)
+    worker.functions[function_id] = remote(num_return_vals=num_return_vals)(function)
+    _logger().info("Successfully imported remote function {}.".format(function_name))
+    # Noify the scheduler that the remote function imported successfully.
+    # We pass an empty error message string because the import succeeded.
+    # TODO(rkn): The below needs to identify the worker somehow...
+    worker.redis_client.rpush("FunctionTable:{}".format(function_id), worker.worker_id)
+
+def process_reusable_variable(reusable_variable_name, serialized_initializer, serialized_reinitializer, worker=global_worker):
+  """Import a reusable variable."""
+  try:
+    initializer = pickling.loads(serialized_initializer)
+    reinitializer = pickling.loads(serialized_reinitializer)
+    reusables.__setattr__(reusable_variable_name, Reusable(initializer, reinitializer))
+  except:
+    # If an exception was thrown when the reusable variable was imported, we
+    # record the traceback and notify the scheduler of the failure.
+    traceback_str = format_error_message(traceback.format_exc())
+    _logger().info("Failed to import reusable variable {}. Failed with message: \n\n{}\n".format(reusable_variable_name, traceback_str))
+    # Notify the scheduler that the reusable variable failed to import.
+    worker.redis_client.rpush("Failures", traceback_str)
+  else:
+    _logger().info("Successfully imported reusable variable {}.".format(reusable_variable_name))
+
+def process_function_to_run(serialized_function, worker=global_worker):
+  """Run on arbitrary function on the worker."""
+  try:
+    # Deserialize the function.
+    function = pickling.loads(serialized_function)
+    # Run the function.
+    function(worker)
+  except:
+    # If an exception was thrown when the function was run, we record the
+    # traceback and notify the scheduler of the failure.
+    traceback_str = traceback.format_exc()
+    _logger().info("Failed to run function on worker. Failed with message: \n\n{}\n".format(traceback_str))
+    # Notify the scheduler that running the function failed.
+    name = function.__name__  if "function" in locals() and hasattr(function, "__name__") else ""
+    worker.redis_client.rpush("Failures", traceback_str)
+  else:
+    _logger().info("Successfully ran function on worker.")
+
+def import_thread(worker):
+  worker.pubsub_client = worker.redis_client.pubsub()
+  worker.pubsub_client.psubscribe("__keyspace@0__:Exports")
+
+  num_imported = 0
+  worker_info_key = "WorkerInfo:{}".format(worker.worker_id)
+  worker.redis_client.hset(worker_info_key, "export_counter", 0)
+
+  for msg in worker.pubsub_client.listen():
+    try:
+      worker.lock.acquire()
+      if msg["type"] == "psubscribe":
+        continue
+      assert msg["data"] == "rpush"
+      num_imports = worker.redis_client.llen("Exports")
+      assert num_imports >= num_imported
+      for i in range(num_imported, num_imports):
+        key = worker.redis_client.lindex("Exports", i)
+        num_imported += 1
+        if key.split(":")[0] == "RemoteFunction":
+          remote_function_id = worker.redis_client.hget(key, "function_id")
+          remote_function_name = worker.redis_client.hget(key, "name")
+          remote_function_module = worker.redis_client.hget(key, "module")
+          serialized_remote_function = worker.redis_client.hget(key, "function")
+          num_return_vals = int(worker.redis_client.hget(key, "num_return_vals"))
+          process_remote_function(remote_function_id, remote_function_name, serialized_remote_function, num_return_vals, remote_function_module, worker=worker)
+        elif key.split(":")[0] == "ReusableVariables":
+          reusable_variable_name = worker.redis_client.hget(key, "name")
+          serialized_initializer = worker.redis_client.hget(key, "initializer")
+          serialized_reinitializer = worker.redis_client.hget(key, "reinitializer")
+          process_reusable_variable(reusable_variable_name, serialized_initializer, serialized_reinitializer, worker=worker)
+        elif key.split(":")[0] == "FunctionsToRun":
+          function_id = worker.redis_client.hget(key, "function_id")
+          serialized_function = worker.redis_client.hget(key, "function")
+          process_function_to_run(serialized_function, worker=worker)
+        else:
+          raise Exception("This code should be unreachable.")
+        worker.redis_client.hincrby(worker_info_key, "export_counter", 1)
+    finally:
+      worker.lock.release()
+
 def connect(node_ip_address, redis_address, object_store_name, object_store_manager_port, worker=global_worker, mode=WORKER_MODE):
   """Connect this worker to the scheduler and an object store.
 
@@ -719,6 +816,8 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
     mode: The mode of the worker. One of SCRIPT_MODE, WORKER_MODE, PYTHON_MODE,
       and SILENT_MODE.
   """
+  worker.worker_id = np.random.randint(0, 1000000)
+
   assert worker.handle is None, "When connect is called, worker.handle should be None."
   # If running Ray in PYTHON_MODE, there is no need to create call create_worker
   # or to start the worker service.
@@ -730,12 +829,18 @@ def connect(node_ip_address, redis_address, object_store_name, object_store_mana
   redis_host, redis_port = redis_address.split(":")
   redis_port = int(redis_port)
   worker.redis_client = redis.StrictRedis(host=redis_host, port=redis_port)
+  worker.lock = threading.Lock()
+
+  if mode in [WORKER_MODE, SILENT_MODE]:
+    t = threading.Thread(target=import_thread, args=(worker,))
+    # Making the thread a daemon causes it to exit when the main thread exits.
+    t.daemon = True
+    t.start()
 
   # Create an object store client.
   worker.plasma_client = plasma.PlasmaClient(object_store_name, node_ip_address, object_store_manager_port)
 
   # Register the worker with Redis.
-  worker.worker_id = np.random.randint(0, 1000000)
   if mode == SCRIPT_MODE:
     worker.redis_client.rpush("Drivers", worker.worker_id)
   elif mode in [WORKER_MODE, SILENT_MODE]:
@@ -991,133 +1096,46 @@ def main_loop(worker=global_worker):
       worker.redis_client.rpush("Failures", traceback_str)
       _logger().info("While attempting to reinitialize the reusable variables after running function {}, the worker threw exception with message: \n\n{}\n".format(function_name, traceback_str))
 
-  def process_remote_function(function_id, function_name, serialized_function, num_return_vals, module):
-    """Import a remote function."""
-    try:
-      function = pickling.loads(serialized_function)
-    except:
-      # If an exception was thrown when the remote function was imported, we
-      # record the traceback and notify the scheduler of the failure.
-      traceback_str = format_error_message(traceback.format_exc())
-      _logger().info("Failed to import remote function {}. Failed with message: \n\n{}\n".format(function_name, traceback_str))
-      # Notify the scheduler that the remote function failed to import.
-      worker.redis_client.rpush("Failures", traceback_str)
-    else:
-      # TODO(rkn): Why is the below line necessary?
-      function.__module__ = module
-      function_name = "{}.{}".format(function.__module__, function.__name__)
-      worker.functions[function_id] = remote(num_return_vals=num_return_vals)(function)
-      _logger().info("Successfully imported remote function {}.".format(function_name))
-      # Noify the scheduler that the remote function imported successfully.
-      # We pass an empty error message string because the import succeeded.
-      # TODO(rkn): The below needs to identify the worker somehow...
-      worker.redis_client.rpush("FunctionTable:{}".format(function_id), worker.worker_id)
-
-  def process_reusable_variable(reusable_variable_name, serialized_initializer, serialized_reinitializer):
-    """Import a reusable variable."""
-    try:
-      initializer = pickling.loads(serialized_initializer)
-      reinitializer = pickling.loads(serialized_reinitializer)
-      reusables.__setattr__(reusable_variable_name, Reusable(initializer, reinitializer))
-    except:
-      # If an exception was thrown when the reusable variable was imported, we
-      # record the traceback and notify the scheduler of the failure.
-      traceback_str = format_error_message(traceback.format_exc())
-      _logger().info("Failed to import reusable variable {}. Failed with message: \n\n{}\n".format(reusable_variable_name, traceback_str))
-      # Notify the scheduler that the reusable variable failed to import.
-      worker.redis_client.rpush("Failures", traceback_str)
-    else:
-      _logger().info("Successfully imported reusable variable {}.".format(reusable_variable_name))
-
-  def process_function_to_run(serialized_function):
-    """Run on arbitrary function on the worker."""
-    try:
-      # Deserialize the function.
-      function = pickling.loads(serialized_function)
-      # Run the function.
-      function(worker)
-    except:
-      # If an exception was thrown when the function was run, we record the
-      # traceback and notify the scheduler of the failure.
-      traceback_str = traceback.format_exc()
-      _logger().info("Failed to run function on worker. Failed with message: \n\n{}\n".format(traceback_str))
-      # Notify the scheduler that running the function failed.
-      name = function.__name__  if "function" in locals() and hasattr(function, "__name__") else ""
-      worker.redis_client.rpush("Failures", traceback_str)
-    else:
-      _logger().info("Successfully ran function on worker.")
-
   num_tasks = 0
-  num_exports = 0
-  num_remote_functions = 0
-  num_reusable_variables = 0
-  num_functions_to_run = 0
 
   worker_task_queue = "TaskQueue:Worker{}".format(worker.worker_id)
 
 
-  worker_info_key = "WorkerInfo:{}".format(worker.worker_id)
-  worker.redis_client.hset(worker_info_key, "export_counter", 0)
-
   while True:
 
     time.sleep(0.01)
-    if worker.redis_client.llen(worker_task_queue) > num_tasks:
-      task_id = worker.redis_client.lindex(worker_task_queue, num_tasks)
-      key = "graph:{}".format(task_id)
+    try:
+      worker.lock.acquire()
+      if worker.redis_client.llen(worker_task_queue) > num_tasks:
+        task_id = worker.redis_client.lindex(worker_task_queue, num_tasks)
+        key = "graph:{}".format(task_id)
 
-      task_info = worker.redis_client.hgetall(key)
-      function_id = task_info["function_id"]
-      function_name = function_id
+        task_info = worker.redis_client.hgetall(key)
+        function_id = task_info["function_id"]
+        function_name = function_id
 
-      arg_keys = [k for k, v in task_info.items() if k.startswith("arg")]
-      num_args = len(arg_keys)
-      args = []
-      for i in range(num_args):
-        arg_id_key =  "arg:{}:id".format(i)
-        arg_val_key =  "arg:{}:val".format(i)
-        if arg_id_key in arg_keys:
-          args.append(object_id.ObjectID(task_info[arg_id_key]))
-        else:
-          args.append(task_info[arg_val_key])
+        arg_keys = [k for k, v in task_info.items() if k.startswith("arg")]
+        num_args = len(arg_keys)
+        args = []
+        for i in range(num_args):
+          arg_id_key =  "arg:{}:id".format(i)
+          arg_val_key =  "arg:{}:val".format(i)
+          if arg_id_key in arg_keys:
+            args.append(object_id.ObjectID(task_info[arg_id_key]))
+          else:
+            args.append(task_info[arg_val_key])
 
-      return_object_ids = []
-      return_id_keys = [k for k, v in task_info.items() if k.startswith("return")]
-      for i in range(len(return_id_keys)):
-        return_object_ids.append(object_id.ObjectID(task_info["return_id:{}".format(i)]))
+        return_object_ids = []
+        return_id_keys = [k for k, v in task_info.items() if k.startswith("return")]
+        for i in range(len(return_id_keys)):
+          return_object_ids.append(object_id.ObjectID(task_info["return_id:{}".format(i)]))
 
-      process_task(function_id, function_name, args, return_object_ids)
+        process_task(function_id, function_name, args, return_object_ids)
 
-      num_tasks += 1
+        num_tasks += 1
 
-    if worker.redis_client.llen("Exports") > num_exports:
-      key = worker.redis_client.lindex("Exports", num_exports)
-
-      if key.split(":")[0] == "RemoteFunction":
-        remote_function_id = worker.redis_client.hget(key, "function_id")
-        remote_function_name = worker.redis_client.hget(key, "name")
-        remote_function_module = worker.redis_client.hget(key, "module")
-        serialized_remote_function = worker.redis_client.hget(key, "function")
-        num_return_vals = int(worker.redis_client.hget(key, "num_return_vals"))
-
-        process_remote_function(remote_function_id, remote_function_name, serialized_remote_function, num_return_vals, remote_function_module)
-      elif key.split(":")[0] == "ReusableVariables":
-        reusable_variable_name = worker.redis_client.hget(key, "name")
-        serialized_initializer = worker.redis_client.hget(key, "initializer")
-        serialized_reinitializer = worker.redis_client.hget(key, "reinitializer")
-
-        process_reusable_variable(reusable_variable_name, serialized_initializer, serialized_reinitializer)
-
-      elif key.split(":")[0] == "FunctionsToRun":
-
-        function_id = worker.redis_client.hget(key, "function_id")
-        serialized_function = worker.redis_client.hget(key, "function")
-
-        process_function_to_run(serialized_function)
-
-      worker.redis_client.hincrby(worker_info_key, "export_counter", 1)
-      num_exports += 1
-
+    finally:
+      worker.lock.release()
 
 def _submit_task(func_name, args, worker=global_worker):
   """This is a wrapper around worker.submit_task.
