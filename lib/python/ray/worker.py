@@ -417,25 +417,26 @@ class Worker(object):
     task_id = str(np.random.randint(0, 10000000))
     function_id = func_name
     key = "graph:{}".format(task_id)
-    self.redis_client.hset(key, "function_id", function_id)
-    self.redis_client.hset(key, "export_counter", self.export_counter)
+    mapping = {}
+    mapping["function_id"] = function_id
     # Put the arguments in Redis.
     for i, arg in enumerate(args):
       if isinstance(arg, object_id.ObjectID):
-        self.redis_client.hset(key, "arg:{}:id".format(i), arg.object_id)
+        mapping["arg:{}:id".format(i)] = arg.object_id
       else:
         serialized_arg = serialization.serialize_argument_if_possible(arg)
         if serialized_arg is not None:
-          self.redis_client.hset(key, "arg:{}:val".format(i), serialized_arg)
+          mapping["arg:{}:val".format(i)] = serialized_arg
         else:
-          self.redis_client.hset(key, "arg:{}:id".format(i), put(arg))
+          mapping["arg:{}:id".format(i)] = put(arg)
 
     # Generate some return object IDs.
     return_object_ids = [object_id.random_object_id() for _ in range(self.num_return_vals[func_name])]
     # Put the return values in Redis.
     for i, obj_id in enumerate(return_object_ids):
-      self.redis_client.hset(key, "return_id:{}".format(i), obj_id.object_id)
+      mapping["return_id:{}".format(i)] = obj_id.object_id
 
+    self.redis_client.hmset(key, mapping)
     self.redis_client.rpush("GlobalTaskQueue", task_id)
     return return_object_ids
 
@@ -1103,7 +1104,7 @@ def main_loop(worker=global_worker):
 
   while True:
 
-    time.sleep(0.01)
+    time.sleep(0.0001)
     try:
       worker.lock.acquire()
       if worker.redis_client.llen(worker_task_queue) > num_tasks:
@@ -1188,13 +1189,14 @@ def _export_reusable_variable(name, reusable, worker=global_worker):
 
 def export_remote_function(function_id, func_name, func, num_return_vals, worker=global_worker):
   key = "RemoteFunction:{}".format(function_id)
-  worker.redis_client.hset(key, "function_id", function_id)
-  worker.redis_client.hset(key, "name", func_name)
-  worker.redis_client.hset(key, "module", func.__module__)
-  pickled_func = pickling.dumps(func)
-  worker.redis_client.hset(key, "function", pickled_func)
-  worker.redis_client.hset(key, "num_return_vals", num_return_vals)
 
+  pickled_func = pickling.dumps(func)
+  worker.redis_client.hmset(key, {"function_id": function_id,
+                                  "name": func_name,
+                                  "module": func.__module__,
+                                  "function": pickled_func,
+                                  "num_return_vals": num_return_vals,
+                                  "export_counter": worker.export_counter})
   worker.redis_client.rpush("Exports", key)
   worker.export_counter += 1
 

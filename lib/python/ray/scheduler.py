@@ -12,6 +12,7 @@ cached_object_table = {}
 # This is a dictionary mapping function IDs to a list of the nodes (or
 # workers?) that can execute that function.
 cached_function_table = {}
+cached_function_info = {}
 cached_task_info = {}
 cached_workers = []
 
@@ -27,7 +28,6 @@ available_workers = []
 def function_id_and_dependencies(task_info):
   #print "task_info is {}".format(task_info)
   function_id = task_info["function_id"]
-  export_counter = int(task_info["export_counter"])
   dependencies = []
   i = 0
   while True:
@@ -36,7 +36,7 @@ def function_id_and_dependencies(task_info):
     elif "arg:{}:val".format(i) not in task_info:
       break
     i += 1
-  return function_id, dependencies, export_counter
+  return function_id, dependencies
 
 def can_schedule(worker_id, task_id):
   task_info = cached_task_info[task_id]
@@ -44,7 +44,7 @@ def can_schedule(worker_id, task_id):
   if function_id not in cached_function_table.keys():
     #print "Function {} is not in cached_function_table.keys()".format(function_id)
     return False
-  if cached_worker_info[worker_id]["export_counter"] < task_info["export_counter"]:
+  if cached_worker_info[worker_id]["export_counter"] < cached_function_info[function_id]["export_counter"]:
     return False
   if worker_id not in cached_function_table[function_id]:
     return False
@@ -62,7 +62,17 @@ if __name__ == "__main__":
   redis_client = redis.StrictRedis(host=redis_host, port=redis_port)
   redis_client.config_set("notify-keyspace-events", "AKE")
   pubsub_client = redis_client.pubsub()
+
+  # Messages published after the call to pubsub_client.psubscribe and before the
+  # call to pubsub.listen should be received in the pubsub_client.listen loop.
   pubsub_client.psubscribe("*")
+
+  # Get anything we may have missed.
+  # remote functions
+  # objects (there shouldn't be any)
+  # tasks
+  # workers
+
 
   # Receive messages and process them.
   for msg in pubsub_client.listen():
@@ -82,10 +92,9 @@ if __name__ == "__main__":
       task_key = "graph:{}".format(task_id)
       #print "Task key is {}".format(task_key)
       task_info = redis_client.hgetall(task_key)
-      function_id, dependencies, export_counter = function_id_and_dependencies(task_info)
+      function_id, dependencies = function_id_and_dependencies(task_info)
       cached_task_info[task_id] = {"function_id": function_id,
-                                   "dependencies": dependencies,
-                                   "export_counter": export_counter}
+                                   "dependencies": dependencies}
       #print "Cached Task Info is {}".format(cached_task_info)
     elif msg["channel"] == "__keyspace@0__:Workers":
       worker_id = redis_client.lindex("Workers", num_workers)
@@ -94,6 +103,13 @@ if __name__ == "__main__":
       available_workers.append(worker_id)
       cached_worker_info[worker_id] = {"export_counter": 0}
       num_workers += 1
+    elif msg["channel"].startswith("__keyspace@0__:RemoteFunction:"):
+      key = msg["channel"].split(":", 1)[1]
+      function_id = key.split(":", 1)[1]
+      function_export_counter = int(redis_client.hget(key, "export_counter"))
+      num_return_vals = int(redis_client.hget(key, "num_return_vals"))
+      cached_function_info[function_id] = {"export_counter": function_export_counter,
+                                           "num_return_vals": num_return_vals}
     elif msg["channel"].startswith("__keyspace@0__:FunctionTable"):
       function_table_key = msg["channel"].split(":", 1)[1]
       function_id = function_table_key.split(":", 1)[1]
@@ -108,7 +124,6 @@ if __name__ == "__main__":
       #print "cached_worker_info is {}".format(cached_worker_info)
     elif msg["channel"] == "ReadyForNewTask":
       worker_id = msg["data"]
-      print "Worker {} is now available".format(worker_id)
       available_workers.append(worker_id)
     else:
       #print "WE DO NOT HANDLE NOTIFICATIONS ON CHANNEL {}".format(msg["channel"])
@@ -121,7 +136,7 @@ if __name__ == "__main__":
       for worker_id in available_workers:
         if can_schedule(worker_id, task_id):
           redis_client.rpush("TaskQueue:Worker{}".format(worker_id), task_id)
-          #print "Scheduling task {} on worker {}".format(task_id, worker_id)
+          print "Scheduling task {} on worker {}".format(task_id, worker_id)
           scheduled_tasks.append(task_id)
           available_workers.remove(worker_id)
           break
