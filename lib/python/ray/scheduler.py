@@ -105,7 +105,7 @@ if __name__ == "__main__":
     elif msg["channel"].startswith("__keyspace@0__:WorkerInfo") and msg["data"] == "hincrby":
       worker_id = msg["channel"].split(":")[2]
       cached_worker_info[worker_id]["export_counter"] += 1
-      print "cached_worker_info is {}".format(cached_worker_info)
+      #print "cached_worker_info is {}".format(cached_worker_info)
     elif msg["channel"] == "ReadyForNewTask":
       worker_id = msg["data"]
       print "Worker {} is now available".format(worker_id)

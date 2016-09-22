@@ -664,6 +664,7 @@ def cleanup(worker=global_worker):
   """
   disconnect(worker)
   worker.set_mode(None)
+  worker.export_counter = 0
   services.cleanup()
 
 atexit.register(cleanup)
@@ -1060,7 +1061,7 @@ def main_loop(worker=global_worker):
 
   while True:
 
-    time.sleep(0.1)
+    time.sleep(0.01)
     if worker.redis_client.llen(worker_task_queue) > num_tasks:
       task_id = worker.redis_client.lindex(worker_task_queue, num_tasks)
       key = "graph:{}".format(task_id)
